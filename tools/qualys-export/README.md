@@ -16,11 +16,30 @@ The script only reads. Every request is an HTTP GET with TLS certificate verific
 QUALYS_API=https://qualysapi.qg2.apps.qualys.com ./qualys-export.sh
 ```
 
-To export only one asset group, give its title as the argument:
+### Exporting only some hosts
+
+If your subscription covers several environments, you can limit the export to the hosts that matter, for example the ones in particular AWS accounts. Qualys's detection API cannot filter by AWS account directly. It filters by **asset tag** or **asset group**, so use the tags or asset groups that stand for those accounts. If none exist, a Qualys administrator can create a tag per account.
+
+Set **one** of these, each a comma-separated list:
+
+| Variable | Selects hosts by |
+| --- | --- |
+| `QUALYS_TAG_NAMES` | Asset tag names, such as `aws-111111111111,aws-222222222222` |
+| `QUALYS_TAG_IDS` | Asset tag ids |
+| `QUALYS_AG_TITLES` | Asset group titles |
+| `QUALYS_AG_IDS` | Asset group ids |
+
+With tags, a host needs **any** one of them by default. Set `QUALYS_TAG_MATCH=all` to require every tag.
 
 ```bash
-QUALYS_API=https://qualysapi.qg2.apps.qualys.com ./qualys-export.sh "AWS Production"
+QUALYS_API=https://qualysapi.qg2.apps.qualys.com \
+QUALYS_TAG_NAMES="aws-111111111111,aws-222222222222" \
+  ./qualys-export.sh
 ```
+
+A single asset-group title can also be given as the argument, as before: `./qualys-export.sh "AWS Production"`. Titles and names are separated by commas, so one that itself contains a comma cannot be given; use its id instead. Setting two kinds at once, or an id that is not a number, is refused before you are asked for a password. The scope you chose is recorded in `export.json`.
+
+If your Qualys user is already limited to some asset groups or tags, the export never holds more than that user can see, whatever you set here.
 
 Every file the script writes, including the final archive, is readable by your user alone. It ignores any personal curl settings (`~/.curlrc`), so nothing on your machine can turn TLS verification off or make it follow a redirect.
 
@@ -37,7 +56,7 @@ One archive in the current directory, `qualys-export-<UTC time>.tgz`, holding:
 | `hld-0001.xml`, `hld-0002.xml`, … | Host detections from the Host List Detection API v6.0, one file per page of up to 1,000 hosts. Every status (New, Active, Re-Opened, Fixed) is included, along with ignored and disabled detections, the result text of each detection, and each host's EC2 metadata and cloud tags. |
 | `kb-*.xml` | Knowledge-base entries (API v4.0) for every QID that appears in the detections, with full details, in batches of 500. |
 | `qids.txt` | The QIDs found in the detections. |
-| `export.json` | Where and when the export was made: the API host, the asset group if one was given, the time, the API versions and the file counts. No credential. |
+| `export.json` | Where and when the export was made: the API host, the scope if one was set (its kind, values and tag match), the time, the API versions and the file counts. No credential. |
 | `*.headers` | The response headers of each request, kept for Qualys's rate-limit and warning headers. Any cookie Qualys sets is removed before it is saved, so they hold no session token. |
 | `hld-output.dtd`, `kb.dtd` | The document type definitions Qualys served, so we can check the files against exactly what your subscription returns. Missing if Qualys did not serve them, which is not an error. |
 

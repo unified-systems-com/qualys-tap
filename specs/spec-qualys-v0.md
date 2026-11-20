@@ -71,7 +71,7 @@ Eight consequences shape v0:
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
 | req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
 | req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
-| req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | Approved for Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
+| req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | In Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
 | req-qualys-detection-read | [The Detection Read](#the-detection-read) | Approved for Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
 | req-qualys-subscription-run | [Subscription And Scan Run](#subscription-and-scan-run) | In Development | The subscription node and one scan run per collection, with probe, filter, watermark, scopes not read, counters and warnings |
 | req-qualys-host | [Hosts](#hosts) | In Development | A node per host as Qualys tracks it, with its cloud fields |
@@ -81,7 +81,7 @@ Eight consequences shape v0:
 | req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | Approved for Development | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
 | req-qualys-parsers | [Result Parsers](#result-parsers) | Approved for Development | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
 | req-qualys-package-link | [Package Link](#package-link) | Approved for Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
-| req-qualys-file-import | [Export Archive Import](#export-archive-import) | Approved for Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
+| req-qualys-file-import | [Export Archive Import](#export-archive-import) | In Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
 | req-qualys-scan-list | Scan List | Backlog | The scans Qualys ran, as nodes a detection's last scan can point at |
@@ -298,7 +298,7 @@ Recordings are never committed. A fixture is committed only after the operator h
 ----
 RID: `req-qualys-states`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 How the collector records absence and change. Every place absence can occur has three outcomes, and the plugin keeps them apart. A detection resolves on Qualys's word alone.
 
@@ -618,7 +618,7 @@ For a `parsed` observation with `mapping_unambiguous` true, `FOUND_IN_PACKAGE__q
 ----
 RID: `req-qualys-file-import`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 When nobody running the collector has API access, someone who does runs `tools/qualys-export/qualys-export.sh`. It is a standalone, read-only script with its own README, kept as simple as possible so anyone can run it (ruled 2026-11-20, Q9a). The collector loads the archive it produces onto the grid through the same code a live read uses.
 

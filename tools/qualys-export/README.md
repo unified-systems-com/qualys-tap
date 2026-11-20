@@ -35,6 +35,7 @@ One archive in the current directory, `qualys-export-<UTC time>.tgz`, holding:
 | `hld-0001.xml`, `hld-0002.xml`, … | Host detections from the Host List Detection API v6.0, one file per page of up to 1,000 hosts. Every status (New, Active, Re-Opened, Fixed) is included, along with ignored and disabled detections, the result text of each detection, and each host's EC2 metadata and cloud tags. |
 | `kb-*.xml` | Knowledge-base entries (API v4.0) for every QID that appears in the detections, with full details, in batches of 500. |
 | `qids.txt` | The QIDs found in the detections. |
+| `export.json` | Where and when the export was made: the API host, the asset group if one was given, the time, the API versions and the file counts. No credential. |
 | `*.headers` | The response headers of each request, kept for Qualys's rate-limit and warning headers. Any cookie Qualys sets is removed before it is saved, so they hold no session token. |
 | `hld-output.dtd`, `kb.dtd` | The document type definitions Qualys served, so we can check the files against exactly what your subscription returns. Missing if Qualys did not serve them, which is not an error. |
 

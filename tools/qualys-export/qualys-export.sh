@@ -67,5 +67,22 @@ fi
 get "$API/api/6.0/fo/asset/host/vm/detection/dtd/output.dtd" hld-output.dtd || true
 get "$API/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd" kb.dtd || true
 
+# 4) What this archive is: where it came from, when, and how it was asked for. The collector
+# reads this to tell which subscription the files belong to. No credential is written.
+python3 -I - "$API" "$AG" <<'PY'
+import datetime, glob, json, sys
+json.dump({
+    "description": "Qualys TAP export manifest: provenance of the files in this archive",
+    "script_version": 1,
+    "api_host": sys.argv[1],
+    "asset_group": sys.argv[2] or None,
+    "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "detection_api": "6.0",
+    "knowledgebase_api": "4.0",
+    "detection_pages": len(glob.glob("hld-*.xml")),
+    "knowledgebase_files": len(glob.glob("kb-*.xml")),
+}, open("export.json", "w"), indent=2)
+PY
+
 cd ..; tar czf "$OUT.tgz" "$OUT"
 echo "Done. Send $OUT.tgz over the agreed secure channel."

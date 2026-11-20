@@ -191,6 +191,35 @@ class TestThrottling:
         assert len(adapter.seen) == client_module.MAX_RETRIES + 1
 
 
+class TestStateless:
+    def test_cookies_are_neither_kept_nor_sent(self) -> None:
+        import http.client
+
+        class SetsCookie(FakeAdapter):
+            def send(self, request, **kwargs):
+                response = super().send(request, **kwargs)
+                # Build the response as urllib3 would, so the session's cookie extraction sees Set-Cookie.
+                message = http.client.HTTPMessage()
+                message["Set-Cookie"] = "QualysSession=abc; Path=/; Secure"
+                response.raw._original_response = type("R", (), {"msg": message, "info": lambda self: message})()
+                response.headers["Set-Cookie"] = "QualysSession=abc; Path=/; Secure"
+                return response
+
+        adapter = SetsCookie((200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None)
+        client.get(DETECTION)
+        client.get(DETECTION)
+        assert len(client._session.cookies) == 0
+        assert all("Cookie" not in sent.headers for sent in adapter.seen)
+
+    def test_a_request_carrying_a_cookie_is_refused(self) -> None:
+        client, adapter = make()
+        prepared = client._session.prepare_request(requests.Request("GET", DETECTION, headers={"Cookie": "x=1"}))
+        with pytest.raises(TransportRefused, match="cookie"):
+            client._session.send(prepared, verify=True, allow_redirects=False)
+        assert adapter.seen == []
+
+
 class TestSerial:
     def test_concurrent_gets_are_serialised(self) -> None:
         import threading

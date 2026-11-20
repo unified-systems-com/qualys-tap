@@ -15,6 +15,7 @@ one request at a time). A 409 waits only for Qualys's throttling codes (1960 con
 in chunks and refused past the page ceiling.
 """
 
+import http.cookiejar
 import math
 import re
 import threading
@@ -137,6 +138,8 @@ class _GuardedSession(requests.Session):
         self._root = root
         self._verify = verify
         self.trust_env = False
+        # Stateless: no cookie Qualys sets is kept or sent back, so the only credential is Basic auth.
+        self.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
 
     def send(self, request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         if request.method != "GET":
@@ -147,6 +150,8 @@ class _GuardedSession(requests.Session):
             raise TransportRefused("TLS verification cannot be overridden")
         if kwargs.get("cert") or kwargs.get("proxies"):
             raise TransportRefused("a client certificate or proxy cannot be set per request")
+        if "Cookie" in request.headers:
+            raise TransportRefused("a request carrying a cookie is refused")
         if kwargs.get("allow_redirects", True):
             raise TransportRefused("redirects are never followed")
         check_url(request.url or "", self._root)

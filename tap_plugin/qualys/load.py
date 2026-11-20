@@ -118,9 +118,10 @@ def load_archive(path: Path, label: str, *, grid: Any, already_loaded: Any, newe
     stamps = [parse_time(p.response_datetime) for p in pages]
     if any(s is None for s in stamps):
         raise LoadRefused("a detection page carries no usable RESPONSE/DATETIME")
-    read_at = min(datetime.fromisoformat(s) for s in stamps)
-    if read_at > now + _SKEW:
-        raise LoadRefused("the archive's read time is in the future")
+    times = [datetime.fromisoformat(s) for s in stamps]
+    if max(times) > now + _SKEW:
+        raise LoadRefused("the archive's read time is in the future")  # any page, not only the earliest
+    read_at = min(times)
     newest = newest_read_time(key)
     if newest is not None and read_at < newest:
         raise LoadRefused("the archive is older than the subscription's newest recorded read")

@@ -187,6 +187,12 @@ class TestLoad:
         with pytest.raises(CommandError, match="in the future"):
             _load(make_archive(tmp_path, pages=[future]))
 
+    def test_one_future_page_among_current_ones_is_refused(self, tmp_path: Path) -> None:
+        current = _fixture("hld-documented.xml").replace(b"2023-08-16T13:34:18Z", b"2026-11-20T18:00:00Z")
+        future = _fixture("hld-documented.xml").replace(b"2023-08-16T13:34:18Z", b"2099-01-01T00:00:00Z")
+        with pytest.raises(CommandError, match="in the future"):
+            _load(make_archive(tmp_path, pages=[current, future]))
+
     def test_off_contract_page_writes_nothing(self, tmp_path: Path) -> None:
         bad = _fixture("hld-ec2-assembled.xml").replace(b"<ID>1001</ID>", b"")
         with pytest.raises(CommandError, match="off-contract"):

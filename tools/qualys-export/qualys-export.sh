@@ -9,12 +9,24 @@ set -euo pipefail
 umask 077   # everything this script writes is readable by you alone
 
 API=${QUALYS_API:?set QUALYS_API to your platform API host, see https://www.qualys.com/platform-identification/}
-API=${API%/}
-case "$API" in https://*) ;; *) echo "QUALYS_API must start with https://" >&2; exit 1 ;; esac
+# Parse the URL the way curl will, and keep only scheme://host[:port]. Userinfo ("x@host"), a path, a
+# query or a fragment is refused: "https://qualysapi.qualys.com:443@evil.example" names evil.example to
+# curl, so the host must come from a real parse, never from string trimming.
+HOST=$(python3 -I - "$API" <<'PY'
+import sys
+from urllib.parse import urlsplit
+u = urlsplit(sys.argv[1].strip())
+ok = (u.scheme == "https" and u.hostname and "@" not in u.netloc and u.path in ("", "/")
+      and not u.query and not u.fragment)
+if not ok:
+    sys.exit("QUALYS_API must be https://<host>[:<port>] with no user, path, query or fragment")
+print(u.hostname.lower() + ("" if u.port in (None, 443) else f":{u.port}"))
+PY
+) || exit 1
+API="https://$HOST"; HOST=${HOST%%:*}
 # The password goes to whatever host QUALYS_API names, so refuse a host that is not a Qualys platform
 # API host (see https://www.qualys.com/platform-identification/). A private-cloud deployment on its own
 # host sets QUALYS_ALLOW_OTHER_HOST=1, deliberately.
-HOST=${API#https://}; HOST=${HOST%%:*}
 if ! printf '%s' "$HOST" | grep -Eq '^qualysapi\.([a-z0-9-]+\.)*qualys(ksa)?\.(com|eu|in|ca|ae|co\.uk|com\.au)$'; then
   if [ "${QUALYS_ALLOW_OTHER_HOST:-}" != 1 ]; then
     echo "QUALYS_API host '$HOST' is not a Qualys platform API host; refusing to send your password there." >&2
@@ -74,7 +86,8 @@ if [ -s qids.txt ]; then
   split -l 500 qids.txt qchunk-
   for c in qchunk-*; do
     get "$API/api/4.0/fo/knowledge_base/vuln/?action=list&details=All&show_disabled_flag=1&ids=$(paste -sd, "$c")" "kb-${c#qchunk-}.xml" \
-      || { KB_COMPLETE=false; echo "knowledge-base read failed; continuing without it" >&2; }
+      || { KB_COMPLETE=false; rm -f "kb-${c#qchunk-}.xml" "kb-${c#qchunk-}.xml.headers"
+           echo "knowledge-base read failed; continuing without it" >&2; }
   done
   rm -f qchunk-*
 else

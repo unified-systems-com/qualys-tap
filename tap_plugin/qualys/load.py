@@ -16,7 +16,10 @@ is particular to a file:
   difference is recorded as ``CONTRACT_DRIFT`` (req-qualys-drift-ci-4).
 """
 
+import contextlib
 import json
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -82,12 +85,24 @@ def _drift(dtds: dict[str, str]) -> list[dict[str, str]]:
     return warnings
 
 
-def load_archive(path: Path, label: str, *, grid: Any, already_loaded: Any, newest_read_time: Any, importer: Any, now: datetime | None = None) -> Loaded:
+def load_archive(
+    path: Path,
+    label: str,
+    *,
+    grid: Any,
+    already_loaded: Any,
+    newest_read_time: Any,
+    importer: Any,
+    serialize: Callable[[str], AbstractContextManager[Any]] = lambda key: contextlib.nullcontext(),
+    now: datetime | None = None,
+) -> Loaded:
     """Check, parse and import one archive; refuse it whole, writing nothing, if any check fails.
 
     ``grid`` is the decomposer's view of what the grid holds; ``already_loaded(key, sha256)`` and
-    ``newest_read_time(key)`` read past runs; ``importer(document)`` performs the GRIFT import. They are passed
-    in so the command binds them to the live grid and tests can drive the same path.
+    ``newest_read_time(key)`` read past runs; ``importer(document)`` performs the GRIFT import; ``serialize(key)``
+    holds the subscription for the checks and the import together, so two loads of one subscription cannot both
+    pass the duplicate and staleness checks before either writes. They are passed in so the command binds them
+    to the live grid and tests can drive the same path.
     """
     now = now or datetime.now(UTC)
     try:
@@ -100,6 +115,12 @@ def load_archive(path: Path, label: str, *, grid: Any, already_loaded: Any, newe
     except ValueError as exc:
         raise LoadRefused(f"export.json api_host is not a canonical https host: {exc}") from exc
     key = subscription_key(api_host, label)
+    with serialize(key):
+        return _load_held(archive, api_host, label, key, sha256, now, grid=grid, already_loaded=already_loaded, newest_read_time=newest_read_time, importer=importer)
+
+
+def _load_held(archive: Archive, api_host: str, label: str, key: str, sha256: str, now: datetime, *, grid: Any, already_loaded: Any, newest_read_time: Any, importer: Any) -> Loaded:
+    """The checks and the import, run while the subscription is held."""
     if already_loaded(key, sha256):
         raise LoadRefused("this archive has already been loaded into this subscription")
 

@@ -137,6 +137,16 @@ class TestArchiveRefused:
         data = read_snapshot(make_archive(tmp_path))
         assert open_archive(data).sha256 == hashlib.sha256(data).hexdigest()
 
+    def test_duplicate_member_name(self, tmp_path: Path) -> None:
+        path = tmp_path / "dup.tgz"
+        body = _fixture("hld-ec2-assembled.xml")
+        with tarfile.open(path, "w:gz") as tar:
+            for _ in range(2):
+                info = tarfile.TarInfo("top/hld-0001.xml")
+                info.size = len(body)
+                tar.addfile(info, io.BytesIO(body))
+        self._refused(path, "appears twice")
+
     def test_not_a_tar(self, tmp_path: Path) -> None:
         path = tmp_path / "a.tgz"
         path.write_bytes(b"not a tar")
@@ -192,6 +202,30 @@ class TestLoad:
         future = _fixture("hld-documented.xml").replace(b"2023-08-16T13:34:18Z", b"2099-01-01T00:00:00Z")
         with pytest.raises(CommandError, match="in the future"):
             _load(make_archive(tmp_path, pages=[current, future]))
+
+    def test_checks_and_import_run_under_the_subscription_hold(self, tmp_path: Path) -> None:
+        import contextlib
+
+        from tap_grid.grift.importer import grift_import
+        from tap_plugin.qualys.load import load_archive
+        from tap_plugin.qualys.store import GridStore
+
+        events: list[str] = []
+
+        @contextlib.contextmanager
+        def hold(key):
+            events.append(f"hold {key}")
+            yield
+            events.append("release")
+
+        def importer(doc):
+            events.append("import")
+            return grift_import(doc)
+
+        load_archive(make_archive(tmp_path), "acme", grid=GridStore(), importer=importer, serialize=hold,
+                     already_loaded=lambda k, s: events.append("dup-check") or False,
+                     newest_read_time=lambda k: events.append("age-check") or None)
+        assert events == [f"hold {KEY}", "dup-check", "age-check", "import", "release"]
 
     def test_off_contract_page_writes_nothing(self, tmp_path: Path) -> None:
         bad = _fixture("hld-ec2-assembled.xml").replace(b"<ID>1001</ID>", b"")

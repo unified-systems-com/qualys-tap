@@ -26,3 +26,8 @@ jobs:
     uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@7046904b47c021e2040ee06fd634e4dbcbd553a7
     with:
       plugin_slug: qualys
+      # The ci record installs aws_core (a declared, optional dependency), and aws_core's migrate is the
+      # boot's long pole (plugin-ci.yml: ~13 minutes of a 13.5-minute boot, longer on a cold runner). At the
+      # 25-minute default the job was cancelled still migrating, with no test run (PR #10, 2026-11-20).
+      # aws-core-tap's own caller sets 75; this matches it.
+      boot_and_test_timeout_minutes: 75

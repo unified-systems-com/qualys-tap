@@ -390,6 +390,8 @@ The record of which subscription was read and what each collection did.
 | `TRUNCATED` | A read stopped with a next-page URL not followed | `req-qualys-detection-read-4` |
 | `EC2_UNRESOLVED` | One or more hosts named an AWS instance `aws_core` does not hold | `req-qualys-ec2-link-3` |
 | `AWS_CORE_ABSENT` | `aws_core` is not installed, so no EC2 link was attempted | `req-qualys-ec2-link-4` |
+| `VALUE_DROPPED` | One or more values were stored as null because their column could not hold them; the detail names each | `req-qualys-detection` |
+| `READ_KIND_DOWNGRADED` | A run labelled complete carried a filter other than the standing scope, so it was treated as narrower and withdrew nothing | `req-qualys-states-5` |
 
 #### Acceptance Criteria
 

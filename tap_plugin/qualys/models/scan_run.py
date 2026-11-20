@@ -25,6 +25,8 @@ WARNING_CODES = (
     "TRUNCATED",
     "EC2_UNRESOLVED",
     "AWS_CORE_ABSENT",
+    "VALUE_DROPPED",
+    "READ_KIND_DOWNGRADED",
 )
 _WARNINGS = {
     "type": ["array", "null"],
@@ -74,6 +76,7 @@ class QualysScanRun(BaseModel):
         "source": {"enum": ["api", "file"]},
         "started_at": _STR_OR_NULL,
         "finished_at": _STR_OR_NULL,
+        "read_at": _STR_OR_NULL,
         "read_kind": {"type": ["string", "null"], "enum": ["complete", "window", "narrower", None]},
         "applied_filter": {"type": ["object", "null"]},
         "window_start": _STR_OR_NULL,
@@ -96,6 +99,12 @@ class QualysScanRun(BaseModel):
     source = models.CharField(max_length=8, help_text="Where the data came from: api (a live read) or file (an export archive).")
     started_at = models.DateTimeField(null=True, blank=True, default=None, help_text="When the run began; null when unobserved.")
     finished_at = models.DateTimeField(null=True, blank=True, default=None, help_text="When the run ended; null while unfinished.")
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="When the data was read from Qualys: the start of a live run, or for a file run the earliest RESPONSE/DATETIME on its pages, never the manifest's time (req-qualys-file-import-4).",
+    )
     read_kind = models.CharField(
         max_length=16,
         null=True,

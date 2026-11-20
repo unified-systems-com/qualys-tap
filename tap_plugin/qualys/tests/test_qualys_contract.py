@@ -87,6 +87,20 @@ class TestBounded:
         with pytest.raises(ReduceError, match="too many|too large"):
             parse_dtd("".join(decls) + "<!ELEMENT A (%e11;)>")
 
+    def test_expansion_bounded_while_it_grows(self) -> None:
+        # Each reference stays under the limit alone; together they would pass 1 GiB if only the end were checked.
+        import tracemalloc
+
+        dtd = '<!ENTITY % e "' + "x" * 10_000 + '">' + "<!ELEMENT A (" + "%e;" * 1000 + ")>"
+        tracemalloc.start()
+        try:
+            with pytest.raises(ReduceError, match="too large"):
+                parse_dtd(dtd)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert peak < 8 << 20  # refused near the 1 MiB bound, not after building ~10 MiB
+
     def test_oversized_refused(self) -> None:
         with pytest.raises(ReduceError, match="larger"):
             parse_dtd("<!ELEMENT A (#PCDATA)>" + " " * MAX_DTD_BYTES)

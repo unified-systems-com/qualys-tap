@@ -50,12 +50,13 @@ def _expand_parameter_entities(text: str) -> str:
         entities[name] = q.group(2)
 
     refs = 0
+    produced = 0  # characters every substitution has produced so far, bounded as it grows
 
     def expand(s: str, stack: tuple[str, ...]) -> str:
         nonlocal refs
 
         def one(m: re.Match[str]) -> str:
-            nonlocal refs
+            nonlocal refs, produced
             name = m.group(1)
             if name in stack:
                 raise ReduceError(f"parameter entity cycle through %{name};")
@@ -67,7 +68,8 @@ def _expand_parameter_entities(text: str) -> str:
             if refs > MAX_ENTITY_REFS:
                 raise ReduceError("too many parameter-entity references")
             out = expand(entities[name], (*stack, name))
-            if len(out) > MAX_EXPANDED_BYTES:
+            produced += len(out)
+            if produced > MAX_EXPANDED_BYTES:
                 raise ReduceError("parameter-entity expansion too large")
             return out
 

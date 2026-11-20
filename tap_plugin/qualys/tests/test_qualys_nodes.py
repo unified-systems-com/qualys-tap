@@ -101,6 +101,18 @@ class TestNodes:
         _create("qualys__qualys_detection", {**DETECTION, "qid": "45038", "detection_type": "Info"})
         assert get_model_class("qualys__qualys_detection").objects.filter(unique_vuln_id="3978355").count() == 2
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"subscription_key": "bogus"},
+            {"subscription_key": subscription_key(HOST, "other-label")},
+            {"api_host": "https://QualysAPI.qg2.apps.qualys.com", "subscription_key": subscription_key(HOST, "acme-prod")},
+        ],
+        ids=["not-a-key", "another-label", "host-not-canonical"],
+    )
+    def test_subscription_key_must_be_derived(self, bad: dict) -> None:
+        assert not create_node("qualys__qualys_subscription", {**SUBSCRIPTION, **bad}).success
+
     def test_unknown_warning_code_refused(self) -> None:
         bad = {**RUN, "warnings": [{"code": "SOMETHING_ELSE"}]}
         assert not create_node("qualys__qualys_scan_run", bad).success

@@ -2,9 +2,11 @@
 
 from typing import Any, ClassVar
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from tap_grid.models import BaseModel
+from tap_plugin.qualys.identity import InvalidApiHost, canonical_api_host, subscription_key
 
 _STR_OR_NULL = {"type": ["string", "null"]}
 
@@ -87,6 +89,23 @@ class QualysSubscription(BaseModel):
 
     class Meta(BaseModel.Meta):
         db_table = "qualys_subscription"
+
+    def validate(self) -> None:
+        """The stored keys must be the ones derived from the host and the label.
+
+        Every other Qualys type keys on ``subscription_key``, so a subscription whose stored key named a
+        different (host, label) pair would strand them. The host must already be canonical, and the key
+        must equal ``identity.subscription_key(api_host, subscription_label)``.
+        """
+        try:
+            canonical = canonical_api_host(self.api_host)
+        except InvalidApiHost as exc:
+            raise ValidationError({"api_host": [str(exc)]}) from exc
+        if canonical != self.api_host:
+            raise ValidationError({"api_host": [f"api_host must be canonical: {canonical}"]})
+        expected = subscription_key(self.api_host, self.subscription_label)
+        if self.subscription_key != expected:
+            raise ValidationError({"subscription_key": [f"subscription_key must be {expected}"]})
 
     def get_name(self) -> str:
         return self.subscription_label or ""

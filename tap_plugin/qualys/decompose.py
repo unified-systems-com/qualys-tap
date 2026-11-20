@@ -319,9 +319,11 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     result.count("qids_not_returned", len(missing))
 
     # Withdrawal, and the record of a complete read: only a complete read with nothing partly read counts.
-    fully_complete = read_kind == COMPLETE and not result.partly_read_pages
+    # A complete read with no read time cannot say when the data was read, so it records no complete read and
+    # withdraws nothing; a live run sets read_at to its own start, a file run to Qualys's response time.
+    fully_complete = read_kind == COMPLETE and not result.partly_read_pages and run.read_at is not None
     if fully_complete:
-        sub_node["node"]["last_complete_read_at"] = (run.read_at or run.started_at).isoformat()
+        sub_node["node"]["last_complete_read_at"] = run.read_at.isoformat()
         for host_id, stored in sorted(grid.current_hosts(key).items()):
             if host_id in seen_hosts:
                 continue

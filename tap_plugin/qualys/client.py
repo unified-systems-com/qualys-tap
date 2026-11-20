@@ -15,6 +15,7 @@ one request at a time). A 409 waits only for Qualys's throttling codes (1960 con
 in chunks and refused past the page ceiling.
 """
 
+import math
 import re
 import threading
 import time
@@ -255,4 +256,6 @@ def _wait_seconds(headers: Any) -> float:
         wait = float(value) if value is not None else DEFAULT_WAIT_SECONDS
     except ValueError:
         wait = DEFAULT_WAIT_SECONDS
+    if not math.isfinite(wait):
+        wait = DEFAULT_WAIT_SECONDS  # NaN and infinity fall back like any other malformed value
     return min(max(wait, 1.0), MAX_WAIT_TOTAL_SECONDS)

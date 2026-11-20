@@ -169,6 +169,13 @@ class TestThrottling:
         client, adapter = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "7"}), (200, b"<x/>", {}), sleeps=sleeps)
         assert client.get(DETECTION).waits == 1 and sleeps == [7.0] and len(adapter.seen) == 2
 
+    @pytest.mark.parametrize("header", ["NaN", "inf", "-inf", "soon"])
+    def test_malformed_wait_header_falls_back(self, header: str) -> None:
+        sleeps: list[float] = []
+        client, _ = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": header}), (200, b"<x/>", {}), sleeps=sleeps)
+        client.get(DETECTION)
+        assert sleeps == [float(client_module.DEFAULT_WAIT_SECONDS)]
+
     def test_other_409_is_an_error_without_waiting(self) -> None:
         sleeps: list[float] = []
         body = b"<SIMPLE_RETURN><RESPONSE><CODE>2003</CODE><TEXT>no permission</TEXT></RESPONSE></SIMPLE_RETURN>"

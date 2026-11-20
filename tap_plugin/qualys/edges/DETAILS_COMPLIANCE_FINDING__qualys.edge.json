@@ -1,0 +1,17 @@
+{
+  "slug": "DETAILS_COMPLIANCE_FINDING__qualys",
+  "name": "Details Compliance Finding",
+  "description": "This Qualys detection stands behind that neutral finding: its QID names the finding's CVE on the finding's host. Many detections can detail one neutral finding; the edge stays after the detection resolves, as the record of what detailed it (req-qualys-neutral).",
+  "sources": [
+    "qualys__qualys_detection"
+  ],
+  "targets": [
+    "compliance_core__compliance_finding"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "finding"
+  }
+}

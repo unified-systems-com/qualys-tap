@@ -1,0 +1,17 @@
+{
+  "slug": "ABOUT_QID__qualys",
+  "name": "About QID",
+  "description": "What a detection means: the knowledge-base record of the QID it reports. Drawn even when the knowledge base did not return the record, to a QID node holding the id only (req-qualys-qid-4).",
+  "sources": [
+    "qualys__qualys_detection"
+  ],
+  "targets": [
+    "qualys__qualys_qid"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "finding"
+  }
+}

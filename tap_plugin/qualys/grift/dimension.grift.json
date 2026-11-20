@@ -1,0 +1,45 @@
+{
+  "metadata": {
+    "grift_version": "0"
+  },
+  "_reserved": {},
+  "batches": [
+    {
+      "batch_entity": {
+        "entity_id": "01a1fa5d-b5df-79e5-a2b8-852f23b498da",
+        "entity_type": "batch",
+        "name": "qualys dimension vocabulary v0.1.0",
+        "dimensions": {}
+      },
+      "batch_node": {
+        "source": "qualys",
+        "name": "qualys dimension vocabulary v0.1.0",
+        "description": "Dimension nodes for the key the qualys plugin stamps on the types it owns (specs/spec-qualys-v0.md, Default dimensions). Dimensions are declared, never created on demand."
+      },
+      "nodes": [
+        {
+          "entity": {
+            "entity_id": "01a1fa5d-b609-7a58-b737-37c58a68fe4a",
+            "entity_type": "dimension",
+            "name": "qualys.area",
+            "dimensions": {
+              "tap.meta": "dimension"
+            }
+          },
+          "node": {
+            "name": "qualys.area",
+            "description": "Which part of Qualys a node or edge describes: run (subscriptions and scan runs), observation (hosts as Qualys tracks them), finding (detections) or knowledge (knowledge-base QID records). Stamped by every qualys node and edge type through DEFAULT_DIMENSIONS or default_dimensions. Not part of any natural key.",
+            "values": [
+              "finding",
+              "knowledge",
+              "observation",
+              "run"
+            ],
+            "usable_in_keys": false
+          }
+        }
+      ],
+      "edges": []
+    }
+  ]
+}

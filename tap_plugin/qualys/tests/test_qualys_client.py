@@ -128,6 +128,20 @@ class TestRefused:
             client._session.get("https://evil.example" + DETECTION_PATH + "?action=list", allow_redirects=False)
         assert other.seen == []
 
+    def test_falsey_streaming_body_refused(self) -> None:
+        class Falsey:
+            def __bool__(self) -> bool:
+                return False
+
+            def __iter__(self):
+                yield b"action=delete"
+
+        client, adapter = make()
+        prepared = client._session.prepare_request(requests.Request("GET", DETECTION, data=Falsey()))
+        with pytest.raises(TransportRefused, match="body"):
+            client._session.send(prepared, verify=True, allow_redirects=False)
+        assert adapter.seen == []
+
     def test_verify_override_refused(self) -> None:
         client, adapter = make()
         prepared = client._session.prepare_request(requests.Request("GET", DETECTION))
@@ -168,6 +182,36 @@ class TestThrottling:
         with pytest.raises(ReadFailed, match="retry bound"):
             client.get(DETECTION)
         assert len(adapter.seen) == client_module.MAX_RETRIES + 1
+
+
+class TestSerial:
+    def test_concurrent_gets_are_serialised(self) -> None:
+        import threading
+        import time as _time
+
+        class Slow(FakeAdapter):
+            active = 0
+            peak = 0
+            guard = threading.Lock()
+
+            def send(self, request, **kwargs):
+                with self.guard:
+                    Slow.active += 1
+                    Slow.peak = max(Slow.peak, Slow.active)
+                _time.sleep(0.05)
+                try:
+                    return super().send(request, **kwargs)
+                finally:
+                    with self.guard:
+                        Slow.active -= 1
+
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=Slow(), sleep=lambda s: None)
+        threads = [threading.Thread(target=client.get, args=(DETECTION,)) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert Slow.peak == 1
 
 
 class TestBounds:

@@ -16,6 +16,7 @@ in chunks and refused past the page ceiling.
 """
 
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -139,7 +140,7 @@ class _GuardedSession(requests.Session):
     def send(self, request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         if request.method != "GET":
             raise TransportRefused("only GET is sent")
-        if request.body:
+        if request.body is not None:
             raise TransportRefused("a request with a body is refused")
         if kwargs.get("verify") is False or kwargs.get("verify") != self._verify:
             raise TransportRefused("TLS verification cannot be overridden")
@@ -186,6 +187,8 @@ class ReadOnlyClient:
         if adapter is not None:
             self._session.mount("https://", adapter)
         self._sleep = sleep
+        # Calls are serial: one request (and its throttling waits) at a time, whatever the caller's threads do.
+        self._lock = threading.Lock()
 
     def __repr__(self) -> str:
         return f"ReadOnlyClient({self._root})"
@@ -197,6 +200,10 @@ class ReadOnlyClient:
     def get(self, url: str) -> Response:
         """One allowlisted read, waiting out Qualys's throttling within the bounds."""
         check_url(url, self._root)
+        with self._lock:
+            return self._get(url)
+
+    def _get(self, url: str) -> Response:
         waited = 0.0
         for attempt in range(MAX_RETRIES + 1):
             raw = self._session.send(

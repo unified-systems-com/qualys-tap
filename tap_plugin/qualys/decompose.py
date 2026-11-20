@@ -264,11 +264,14 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
     held_findings = grid.held_findings(neutral.source_key(key, g.host_id, g.cve) for g in groups)
     groups = [g for g in groups if g.open or neutral.source_key(key, g.host_id, g.cve) in held_findings]
 
-    # The shared vulnerability records: every CVE a written QID names, and every CVE a finding concerns.
-    scores: dict[str, dict[str, Any]] = {}
-    for qid, cves in cves_by_qid.items():
-        for cve in cves:
-            if neutral.usable_vuln_id(cve) and not scores.get(cve):
+    # The shared vulnerability records: every CVE a QID returned this run names, and every CVE a written finding
+    # concerns; a held detection's CVE that no written finding concerns is not touched. Where several QIDs name one
+    # CVE, the score comes from the lowest-numbered QID that has one, so the result never depends on read order.
+    in_scope = {cve for qid in cves_by_qid if qid in vulns for cve in cves_by_qid[qid]} | {g.cve for g in groups}
+    scores: dict[str, dict[str, Any]] = {cve: {} for cve in in_scope if neutral.usable_vuln_id(cve)}
+    for qid in sorted(cves_by_qid, key=int):
+        for cve in cves_by_qid[qid]:
+            if cve in scores and not scores[cve]:
                 scores[cve] = neutral.cvss_of(records[qid])
     held = grid.vulnerabilities(scores)
     defaults = grid.default_dimensions(neutral.VULNERABILITY_TYPE)
@@ -303,8 +306,11 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
         result.nodes.append(neutral.package_node(f"p:{'/'.join(package)}", package, package_dims))
         result.count("packages_created")
 
-    # The findings, their edges, and one authority claim each so a changed carrier leaves exactly one edge.
+    # The findings, their edges, and one authority claim each so a changed carrier leaves exactly one edge. A run
+    # that skipped an entry, or met a host twice, cannot say it saw every detection behind a finding, so its claims
+    # say partial and propose no removal (req-grid-reconcile-edge-authority: only complete licenses one).
     finding_dims = grid.default_dimensions(neutral.FINDING_TYPE)
+    whole = not result.partly_read_pages and not result.counters.get("hosts_repeated") and not result.counters.get("detections_unkeyable")
     for grp in groups:
         ref = f"n:{grp.host_id}:{grp.cve}"
         first = min((t for d in grp.detections if (t := parse_time(d.first_found_datetime))), default=None)
@@ -324,7 +330,7 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
         if required:
             concerns["edge"]["properties"] = {"fixed_versions": [required]}
         result.edges.append(concerns)
-        result.authority.append(neutral.authority_claim(key, grp.host_id, grp.cve))
+        result.authority.append(neutral.authority_claim(key, grp.host_id, grp.cve, complete=whole))
         result.count("neutral_findings")
         result.count("neutral_findings_open" if grp.open else "neutral_findings_resolved")
 

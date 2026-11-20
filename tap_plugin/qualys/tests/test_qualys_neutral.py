@@ -152,6 +152,32 @@ class TestCarrier:
         assert document(result, _run())["batches"][0]["edge_cases"] == {"authority": result.authority}
 
 
+class TestReviewRound1:
+    def test_a_partly_read_run_claims_partial(self) -> None:
+        # One detection with an unusable unique id: the page is partly read, so no claim may say complete.
+        pages = _pages(**{"<UNIQUE_VULN_ID>7000003</UNIQUE_VULN_ID>": "<UNIQUE_VULN_ID>not-a-number-" + "x" * 300 + "</UNIQUE_VULN_ID>"})
+        result = decompose(_run(), pages, _kb(_vuln("6666666", "CVE-1")), FakeGrid())
+        assert result.partly_read_pages == 1 and result.authority
+        assert {c["read"] for c in result.authority} == {"partial"}
+
+    def test_a_whole_run_claims_complete(self) -> None:
+        result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-1")), FakeGrid())
+        assert {c["read"] for c in result.authority} == {"complete"}
+
+    def test_an_unrelated_held_cve_is_not_touched(self) -> None:
+        grid = FakeGrid()
+        grid.detection_rows = {"1001": [{"qid": "90000", "unique_vuln_id": "1", "state": "resolved", "severity": "5", "first_found_datetime": None, "package_observations": None}]}
+        grid.qid_rows = {"90000": {"qid": "90000", "cve_list": [{"id": "CVE-B"}], "cvss_v2": None, "cvss_v3": {"base": "9.0"}}}
+        result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-A")), grid)
+        assert [n["node"]["vuln_id"] for n in _of(result, neutral.VULNERABILITY_TYPE)] == ["CVE-A"]
+
+    def test_the_score_does_not_depend_on_order(self) -> None:
+        kb_a = _kb(_vuln("6666666", "CVE-1", v3="9.1"), _vuln("11827", "CVE-1", v3="4.0"))
+        kb_b = _kb(_vuln("11827", "CVE-1", v3="4.0"), _vuln("6666666", "CVE-1", v3="9.1"))
+        scores = {_of(decompose(_run(), _pages(), kb, FakeGrid()), neutral.VULNERABILITY_TYPE)[0]["node"]["cvss_score"] for kb in (kb_a, kb_b)}
+        assert scores == {4.0}  # the lowest-numbered QID with a score, 11827, whichever order the pages came in
+
+
 class TestVulnerabilityRecord:
     def test_absent_record_created_with_the_exact_id_and_score(self) -> None:
         result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-2024-40780", v3="8.8", v2="6.8")), FakeGrid())

@@ -189,11 +189,14 @@ def package_node(ref: str, key: tuple[str, str, str], dimensions: dict[str, str]
     }
 
 
-def authority_claim(subscription_key: str, host_id: str, cve_id: str) -> dict[str, Any]:
-    """This run's statement that the carrier it sends is the finding's whole set of carriers (req-qualys-neutral-3)."""
+def authority_claim(subscription_key: str, host_id: str, cve_id: str, *, complete: bool = True) -> dict[str, Any]:
+    """This run's statement that the carrier it sends is the finding's whole set of carriers (req-qualys-neutral-3).
+
+    ``complete`` false (a run that skipped an entry) makes the claim ``partial``, which proposes no removal.
+    """
     return {
         "edge_type": CARRIES,
         "anchor": {"entity_type": FINDING_TYPE, "key": finding_key(subscription_key, host_id, cve_id)},
         "direction": "inbound",
-        "read": "complete",
+        "read": "complete" if complete else "partial",
     }

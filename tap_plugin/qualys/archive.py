@@ -54,6 +54,7 @@ def _check_members(tar: tarfile.TarFile, compressed_size: int) -> tuple[str, lis
     members = []
     total = 0
     top: str | None = None
+    seen: set[str] = set()
     for count, info in enumerate(tar, start=1):
         if count > MAX_MEMBERS:
             raise ArchiveRefused(f"more than {MAX_MEMBERS} members")
@@ -66,6 +67,10 @@ def _check_members(tar: tarfile.TarFile, compressed_size: int) -> tuple[str, lis
             top = path.parts[0]
         elif path.parts[0] != top:
             raise ArchiveRefused("members are not under one top-level directory")
+        name = path.as_posix().rstrip("/")
+        if name in seen:
+            raise ArchiveRefused("a member name appears twice, so which copy would be read is ambiguous")
+        seen.add(name)
         if info.isfile():
             if info.size > MAX_PAGE_BYTES:
                 raise ArchiveRefused(f"a member is larger than {MAX_PAGE_BYTES} bytes")

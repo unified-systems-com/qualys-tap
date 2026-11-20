@@ -78,9 +78,17 @@ class TestNodes:
         assert detections["11827"]["is_ignored"] == "1"
         assert detections["45038"]["results"] == "" and detections["45038"]["port"] is None
 
-    def test_parse_state_unobserved_until_parsers(self) -> None:
-        for d in _nodes(decompose(_run(), _pages(), _kb(), FakeGrid()), "qualys__qualys_detection"):
-            assert d["parse_state"] is None and d["package_observations"] is None
+    def test_every_detection_carries_one_parse_state(self) -> None:
+        result = decompose(_run(), _pages(), _kb(), FakeGrid())
+        detections = {d["qid"]: d for d in _nodes(result, "qualys__qualys_detection")}
+        assert {d["parse_state"] for d in detections.values()} <= {"parsed", "no_parser", "parser_failed", "not_applicable"}
+        table = detections["6666666"]
+        assert (table["parse_state"], table["parser_version"]) == ("parsed", "package_table/1")
+        assert table["package_observations"][0]["name"] == "webkit2gtk"
+        # Empty result text is no parser, never "no package"; and the text itself is stored unchanged.
+        assert (detections["45038"]["parse_state"], detections["45038"]["package_observations"]) == ("no_parser", None)
+        assert table["results"].startswith("Package\tInstalled Version")
+        assert result.counters["parse_parsed"] >= 1 and result.counters["parse_no_parser"] >= 1
 
 
 class TestResolution:

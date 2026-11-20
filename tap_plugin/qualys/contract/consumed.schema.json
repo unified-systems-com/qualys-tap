@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "consumed.json: the elements of each Qualys output this plugin reads.",
+  "type": "object",
+  "required": ["description", "documents"],
+  "additionalProperties": false,
+  "properties": {
+    "description": {"type": "string", "minLength": 1, "description": "What this file is."},
+    "documents": {
+      "type": "object",
+      "description": "One entry per Qualys output document, keyed by the plugin's name for it.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "dtd", "root", "elements"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {"type": "string", "minLength": 1, "description": "Which Qualys output this is."},
+          "dtd": {"type": "string", "pattern": "^[a-z0-9-]+\\.dtd$", "description": "The committed DTD under tests/vendor/."},
+          "root": {"type": "string", "minLength": 1, "description": "The document's root element."},
+          "elements": {"type": "array", "items": {"type": "string"}, "uniqueItems": true, "minItems": 1, "description": "The element names the plugin reads."},
+          "named_not_declared": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}, "description": "Elements a content model names but the DTD never declares, each with the reason it is read anyway."}
+        }
+      }
+    }
+  }
+}

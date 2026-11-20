@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fixture-evidence: documented (Qualys KnowledgeBase API 4.0 reference, first XML sample, copied verbatim from https://docs.qualys.com/en/vm/qweb-all-api/mergedProjects/qapi-scan/kbase/knowledgebase.htm on 2026-11-20) -->
+<KNOWLEDGE_BASE_VULN_LIST_OUTPUT>
+    <RESPONSE>
+        <DATETIME>2024-09-02T10:55:37Z</DATETIME>
+        <VULN_LIST>
+            <VULN>
+                <QID>6666666</QID>
+                <VULN_TYPE>Vulnerability</VULN_TYPE>
+                <SEVERITY_LEVEL>3</SEVERITY_LEVEL>
+                <TITLE>
+                    <![CDATA[Debian 12 Security Update for webkit2gtk (CVE-2024-40780)]]>
+                </TITLE>
+                <CATEGORY>Debian</CATEGORY>
+                <LAST_SERVICE_MODIFICATION_DATETIME>2024-09-02T02:43:07Z</LAST_SERVICE_MODIFICATION_DATETIME>
+                <PUBLISHED_DATETIME>2024-08-26T14:08:11Z</PUBLISHED_DATETIME>
+                <CODE_MODIFIED_DATETIME>2024-08-26T14:08:11Z</CODE_MODIFIED_DATETIME>
+                <PATCHABLE>1</PATCHABLE>
+                <PATCH_PUBLISHED_DATE>2024-08-15T00:00:00Z</PATCH_PUBLISHED_DATE>
+                <SOFTWARE_LIST>
+                    <SOFTWARE>
+                        <PRODUCT>
+                            <![CDATA[webkit2gtk]]>
+                        </PRODUCT>
+                        <VENDOR>
+                            <![CDATA[debian]]>
+                        </VENDOR>
+                    </SOFTWARE>
+                </SOFTWARE_LIST>
+                <VENDOR_REFERENCE_LIST>
+                    <VENDOR_REFERENCE>
+                        <ID>
+                            <![CDATA[webkit2gtk_Debian12]]>
+                        </ID>
+                        <URL>
+                            <![CDATA[https://security-tracker.debian.org/tracker/CVE-2024-40780]]>
+                        </URL>
+                    </VENDOR_REFERENCE>
+                </VENDOR_REFERENCE_LIST>
+                <CVE_LIST>
+                    <CVE>
+                        <ID>
+                            <![CDATA[CVE-2024-40780]]>
+                        </ID>
+                        <URL>
+                            <![CDATA[http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-40780]]>
+                        </URL>
+                    </CVE>
+                </CVE_LIST>
+                <DIAGNOSIS>
+                    <![CDATA[Debian has released a security update for webkit2gtk to fix the vulnerabilities.]]>
+                </DIAGNOSIS>
+                <CONSEQUENCE>
+                    <![CDATA[Successful exploitation of this vulnerability could lead to a security breach or affect integrity, availability, and confidentiality.]]>
+                </CONSEQUENCE>
+                <SOLUTION>
+                    <![CDATA[Refer to Debian security advisory <A HREF='https://security-tracker.debian.org/tracker/CVE-2024-40780' TARGET='_blank'>CVE-2024-40780</A> for updates and patch information.]]>
+                </SOLUTION>
+                <PCI_FLAG>0</PCI_FLAG>
+                <THREAT_INTELLIGENCE>
+                    <THREAT_INTEL id="4">
+                        <![CDATA[High_Lateral_Movement]]>
+                    </THREAT_INTEL>
+                </THREAT_INTELLIGENCE>
+                <DISCOVERY>
+                    <REMOTE>0</REMOTE>
+                    <AUTH_TYPE_LIST>
+                        <AUTH_TYPE>Unix</AUTH_TYPE>
+                    </AUTH_TYPE_LIST>
+                    <ADDITIONAL_INFO>Patch Available</ADDITIONAL_INFO>
+                </DISCOVERY>
+            </VULN>
+        </VULN_LIST>
+    </RESPONSE>
+</KNOWLEDGE_BASE_VULN_LIST_OUTPUT>

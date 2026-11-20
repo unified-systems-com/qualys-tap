@@ -1,0 +1,18 @@
+{
+  "description": "Where each committed DTD source came from. Each was copied from Qualys's published XML/DTD reference by a script that only drops the PDF's page headers and page numbers; nothing is typed. These are the DTDs the reference shows for the /api/2.0 paths; the 6.0 and 4.0 outputs are expected to be supersets, and the drift check compares them when a served DTD is in hand (req-qualys-drift-ci-4).",
+  "source": "https://cdn2.qualys.com/docs/qualys-api-vmpc-dtd-reference.pdf",
+  "source_version": "Qualys API (VM, PC) XML/DTD Reference v10.25.1",
+  "fetched": "2026-11-20",
+  "files": {
+    "hld-output.dtd": {
+      "description": "Host List VM Detection Output DTD (output.dtd)",
+      "sha256": "bc29fe24ae0c729b7b5f061440cca2b19be29feeaf86974becc5828641ac97a5",
+      "elements": 88
+    },
+    "kb-output.dtd": {
+      "description": "KnowledgeBase VULN List Output DTD (knowledge_base_vuln_list_output.dtd)",
+      "sha256": "dcfc5baa5e8076f9314a4b0a68da2361edd03c046f6ee59f76fabf2e3d753edc",
+      "elements": 109
+    }
+  }
+}

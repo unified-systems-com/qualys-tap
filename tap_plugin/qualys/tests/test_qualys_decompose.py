@@ -156,6 +156,15 @@ class TestWithdrawal:
         (sub,) = _nodes(result, "qualys__qualys_subscription")
         assert sub["standing_scope"] == {"tag_ids": [7]}  # the new scope is recorded for the next read
 
+    def test_complete_read_without_a_read_time_records_and_withdraws_nothing(self) -> None:
+        run = _run(COMPLETE)
+        run.read_at = None
+        held = {"last_complete_read_at": "2026-11-01T00:00:00+00:00"}
+        result = decompose(run, _complete_pages(), _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}, sub=held))
+        (sub,) = _nodes(result, "qualys__qualys_subscription")
+        assert sub["last_complete_read_at"] == held["last_complete_read_at"]
+        assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+
     def test_complete_read_records_its_time(self) -> None:
         (sub,) = _nodes(decompose(_run(COMPLETE), _complete_pages(), _kb(), FakeGrid()), "qualys__qualys_subscription")
         assert sub["last_complete_read_at"] == "2026-11-20T18:00:00+00:00"

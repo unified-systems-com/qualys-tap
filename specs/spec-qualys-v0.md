@@ -68,7 +68,7 @@ Eight consequences shape v0:
 | req-qualys-connection | [Connection And Credential](#connection-and-credential) | Approved for Development | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
 | req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | Approved for Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
 | req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | Approved for Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
-| req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | Approved for Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
+| req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
 | req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
 | req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
 | req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | Approved for Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
@@ -201,7 +201,7 @@ The probe is the first detection page with `truncation_limit=1`. It is an ordina
 ----
 RID: `req-qualys-contract-extract`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 A committed extract of the part of Qualys's output DTDs this plugin reads, produced by a script and never typed, and tests that check the parser against it with no network. The plugin's `ci` boot record excludes network access, so nothing in the normal suite calls Qualys.
 
@@ -209,7 +209,7 @@ A committed extract of the part of Qualys's output DTDs this plugin reads, produ
 
 `tap_plugin/qualys/contract/extract.json`, with a JSON Schema and a `description` on the top level and every entry. `tap_plugin/qualys/contract/reduce.py` produces it from a DTD and the element paths named in `contract/consumed.json`: each consumed element, its content model, its attributes and whether each is required. The committed sources are the host detection 6.0 output DTD and the knowledge base 4.0 output DTD, under `tests/vendor/`, with `provenance.json` recording where each came from, the fetch date and its hash. The first copies come from the DTDs an export archive carries or, failing that, from Qualys's DTD reference ([DTD](https://cdn2.qualys.com/docs/qualys-api-vmpc-dtd-reference.pdf)), marked as such. `contract/build.py` regenerates the extract, and `--check` tests it.
 
-Every response is checked against the extract before any node is written. A required element that is missing or malformed fails that page. An element the extract does not name is tolerated and not stored. The reducer takes a DTD as data and never resolves an external entity or fetches anything. It refuses a document over a fixed size, treats a parameter-entity cycle as an error, and bounds expansion: at most 1,000 parameter-entity references expanded and at most 1 MiB of expanded text per document, so an acyclic chain cannot grow exponentially.
+Every response is checked against the extract before any node is written. A required element that is missing or malformed fails that page. An element the extract does not name is tolerated and not stored. A required child is checked only when the plugin reads it, so an unread element the DTD requires (the knowledge base's `DISCOVERY`) cannot fail a page. Where Qualys's published DTD names an element in a content model but never declares it (`ASSET_ID` in `HOST`), `consumed.json` lists it under `named_not_declared` with the reason; the reducer checks the name really is named and really is undeclared, and records it with no content model. `CLOUD_PROVIDER_TAGS` is named and undeclared too, with no documented shape, so it is not read until a recording shows one (ledger `cloud-provider-tags-shape`). The reducer takes a DTD as data and never resolves an external entity or fetches anything. It refuses a document over a fixed size, treats a parameter-entity cycle as an error, and bounds expansion: at most 1,000 parameter-entity references expanded and at most 1 MiB of expanded text per document, so an acyclic chain cannot grow exponentially.
 
 #### Acceptance Criteria
 
@@ -280,6 +280,7 @@ The open-assumptions ledger is `tap_plugin/qualys/observe_assumptions.json`, wit
 | `dtd-unauthenticated` | Whether the API DTDs are served without a credential |
 | `eos-warning-shape` | The shape of an end-of-support warning |
 | `package-table-variants` | Which package-table header variants appear in result text |
+| `cloud-provider-tags-shape` | The shape of `CLOUD_PROVIDER_TAGS`, which the DTD names but does not declare |
 
 Recordings are never committed. A fixture is committed only after the operator has reviewed a trimmed copy.
 

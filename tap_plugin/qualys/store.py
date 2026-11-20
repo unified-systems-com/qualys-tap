@@ -7,7 +7,11 @@ actor (a collector task or the load command binds one).
 from collections.abc import Iterable
 from typing import Any
 
+from django.apps import apps
 from django.forms.models import model_to_dict
+
+from tap_grid.dimension_names import view
+from tap_plugin.qualys.models.detection import QualysDetection
 
 from tap_plugin.qualys.models.host import QualysHost
 from tap_plugin.qualys.models.qid import QualysQid
@@ -42,6 +46,53 @@ class GridStore:
         if not qids:
             return set()
         return set(QualysQid.objects.filter(subscription_key=key, qid__in=qids).values_list("qid", flat=True))
+
+    def qid_records(self, key: str, qids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        qids = list(qids)
+        if not qids:
+            return {}
+        rows = QualysQid.objects.filter(subscription_key=key, qid__in=qids).values("qid", "cve_list", "cvss_v2", "cvss_v3")
+        return {row["qid"]: row for row in rows}
+
+    def host_detections(self, key: str, host_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        host_ids = list(host_ids)
+        if not host_ids:
+            return {}
+        out: dict[str, list[dict[str, Any]]] = {}
+        fields = ("host_id", "qid", "unique_vuln_id", "state", "severity", "first_found_datetime", "package_observations")
+        for row in QualysDetection.objects.filter(subscription_key=key, host_id__in=host_ids).values(*fields):
+            out.setdefault(row["host_id"], []).append(row)
+        return out
+
+    def vulnerabilities(self, vuln_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Held shared records by exact id; no alias is resolved and no case folded."""
+        ids = list(vuln_ids)
+        if not ids:
+            return {}
+        model = apps.get_model("compliance_core", "ComplianceVulnerability")
+        rows = model.objects.filter(vuln_id__in=ids).select_related("entity")
+        return {row.vuln_id: {"scored": row.cvss_score is not None, "dimensions": dict(view(row.entity.dimensions))} for row in rows}
+
+    def held_packages(self, keys: Iterable[tuple[str, str, str]]) -> set[tuple[str, str, str]]:
+        keys = set(keys)
+        if not keys:
+            return set()
+        model = apps.get_model("computing_core", "Package")
+        names = {k[1] for k in keys}
+        rows = model.objects.filter(name__in=names).values_list("ecosystem", "name", "version")
+        return {row for row in rows if row in keys}
+
+    def held_findings(self, source_keys: Iterable[str]) -> set[str]:
+        keys = list(source_keys)
+        if not keys:
+            return set()
+        model = apps.get_model("compliance_core", "ComplianceFinding")
+        return set(model.objects.filter(source="qualys", source_key__in=keys).values_list("source_key", flat=True))
+
+    def default_dimensions(self, entity_type: str) -> dict[str, str]:
+        from tap_grid.registry import get_model_class
+
+        return dict(get_model_class(entity_type).DEFAULT_DIMENSIONS)
 
 
 def newest_read_time(key: str) -> Any:

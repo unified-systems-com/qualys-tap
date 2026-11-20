@@ -1,13 +1,16 @@
 """Open an export archive from ``tools/qualys-export`` without trusting it (req-qualys-file-import-2, -3).
 
-The archive is a gzip tar. Nothing is extracted to disk: members are read into memory one at a time, after
-every member has been checked. Only regular files and directories are accepted, every path must sit under one
+The archive is a gzip tar, read once from disk into one snapshot (bounded by ``MAX_ARCHIVE_BYTES``) that is
+hashed, measured and unpacked, so the bytes recorded and the bytes loaded are the same bytes. Nothing is
+extracted to disk, and only the members the loader reads are kept in memory; anything else is skipped unread. Only regular files and directories are accepted, every path must sit under one
 top-level directory with no absolute part and no ``..``, and the limits below hold before anything is read:
 member size, member count, total expanded size and compression ratio. The manifest (``export.json``) is
 checked against the plugin's API versions and against the archive's own members. It is otherwise trusted for
 nothing: its ``created_at`` is recorded and never gates state.
 """
 
+import hashlib
+import io
 import json
 import re
 import tarfile
@@ -18,7 +21,9 @@ from typing import Any
 from tap_plugin.qualys.parse import MAX_PAGE_BYTES
 
 MAX_MEMBERS = 10_000
-MAX_TOTAL_BYTES = 4 << 30
+#: The compressed archive read from disk, and everything it may expand to.
+MAX_ARCHIVE_BYTES = 512 << 20
+MAX_TOTAL_BYTES = 1 << 30
 MAX_RATIO = 100
 DETECTION_API = "6.0"
 KNOWLEDGEBASE_API = "4.0"
@@ -102,17 +107,33 @@ def _manifest(raw: bytes) -> dict[str, Any]:
     return manifest
 
 
-def open_archive(path: Path, sha256: str) -> Archive:
-    """Read and check an export archive; refuse it whole if anything about it is off."""
-    compressed = path.stat().st_size
+def _wanted(name: str) -> bool:
+    """The members the loader reads; the export script's headers files and anything else are skipped unread."""
+    return name in ("export.json", "qids.txt", "hld-output.dtd", "kb.dtd") or bool(_DETECTION_PAGE.fullmatch(name) or _KB_FILE.fullmatch(name))
+
+
+def read_snapshot(path: Path) -> bytes:
+    """The archive's bytes, read once and bounded: what is hashed is what is loaded."""
+    with path.open("rb") as handle:
+        data = handle.read(MAX_ARCHIVE_BYTES + 1)
+    if len(data) > MAX_ARCHIVE_BYTES:
+        raise ArchiveRefused(f"the archive is larger than {MAX_ARCHIVE_BYTES} bytes")
+    return data
+
+
+def open_archive(data: bytes) -> Archive:
+    """Check and read an export archive from its snapshot; refuse it whole if anything about it is off."""
+    sha256 = hashlib.sha256(data).hexdigest()
     try:
-        with tarfile.open(path, mode="r:gz") as tar:
-            top, members = _check_members(tar, compressed)
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+            top, members = _check_members(tar, len(data))
             files: dict[str, bytes] = {}
             for info in members:
                 name = PurePosixPath(info.name).relative_to(top).as_posix()
                 if "/" in name:
                     raise ArchiveRefused("the archive has a nested directory the export script does not write")
+                if not _wanted(name):
+                    continue
                 handle = tar.extractfile(info)
                 if handle is None:
                     raise ArchiveRefused("a member could not be read")
@@ -133,7 +154,11 @@ def open_archive(path: Path, sha256: str) -> Archive:
         raise ArchiveRefused("the archive holds no detection page")
     qids = set()
     if "qids.txt" in files:
-        for line in files["qids.txt"].decode("utf-8", errors="strict").splitlines():
+        try:
+            text = files["qids.txt"].decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise ArchiveRefused("qids.txt is not UTF-8") from exc
+        for line in text.splitlines():
             if line.strip():
                 if not line.strip().isdigit():
                     raise ArchiveRefused("qids.txt holds something other than QIDs")

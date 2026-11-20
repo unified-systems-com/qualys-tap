@@ -16,14 +16,13 @@ is particular to a file:
   difference is recorded as ``CONTRACT_DRIFT`` (req-qualys-drift-ci-4).
 """
 
-import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from tap_plugin.qualys.archive import Archive, ArchiveRefused, open_archive
+from tap_plugin.qualys.archive import Archive, ArchiveRefused, open_archive, read_snapshot
 from tap_plugin.qualys.contract.reduce import ReduceError, reduce
 from tap_plugin.qualys.decompose import COMPLETE, Run, decompose, document, parse_time
 from tap_plugin.qualys.identity import canonical_api_host, subscription_key
@@ -91,11 +90,11 @@ def load_archive(path: Path, label: str, *, grid: Any, already_loaded: Any, newe
     in so the command binds them to the live grid and tests can drive the same path.
     """
     now = now or datetime.now(UTC)
-    sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     try:
-        archive: Archive = open_archive(path, sha256)
+        archive: Archive = open_archive(read_snapshot(path))
     except ArchiveRefused as exc:
         raise LoadRefused(str(exc)) from exc
+    sha256 = archive.sha256
     try:
         api_host = canonical_api_host(archive.manifest["api_host"])
     except ValueError as exc:

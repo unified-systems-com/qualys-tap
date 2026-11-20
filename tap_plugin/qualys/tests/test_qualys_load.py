@@ -19,7 +19,7 @@ import tap_plugin.qualys.models  # noqa: F401 — trigger model registration
 from django.core.management import CommandError, call_command
 
 from tap_plugin.qualys import archive as archive_module
-from tap_plugin.qualys.archive import ArchiveRefused, open_archive
+from tap_plugin.qualys.archive import ArchiveRefused, open_archive, read_snapshot
 from tap_plugin.qualys.identity import subscription_key
 from tap_plugin.qualys.models import QualysDetection, QualysHost, QualysQid, QualysScanRun, QualysSubscription
 
@@ -78,7 +78,7 @@ def make_archive(
 class TestArchiveRefused:
     def _refused(self, path: Path, match: str) -> None:
         with pytest.raises(ArchiveRefused, match=match):
-            open_archive(path, "0" * 64)
+            open_archive(read_snapshot(path))
 
     def test_symlink(self, tmp_path: Path) -> None:
         path = tmp_path / "a.tgz"
@@ -119,6 +119,23 @@ class TestArchiveRefused:
 
     def test_nested_directory(self, tmp_path: Path) -> None:
         self._refused(make_archive(tmp_path, extra={"sub/x.xml": b"x"}), "nested directory")
+
+    def test_qids_not_utf8(self, tmp_path: Path) -> None:
+        self._refused(make_archive(tmp_path, extra={"qids.txt": b"\xff\xfe"}), "not UTF-8")
+
+    def test_archive_over_the_size_cap(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr(archive_module, "MAX_ARCHIVE_BYTES", 100)
+        self._refused(make_archive(tmp_path), "larger than 100 bytes")
+
+    def test_unknown_members_are_not_kept(self, tmp_path: Path) -> None:
+        archive = open_archive(read_snapshot(make_archive(tmp_path, extra={"filler.bin": b"F" * 50_000, "hld-0001.xml.headers": b"H"})))
+        assert len(archive.detection_pages) == 1 and archive.dtds == {}
+
+    def test_digest_is_of_the_bytes_loaded(self, tmp_path: Path) -> None:
+        import hashlib
+
+        data = read_snapshot(make_archive(tmp_path))
+        assert open_archive(data).sha256 == hashlib.sha256(data).hexdigest()
 
     def test_not_a_tar(self, tmp_path: Path) -> None:
         path = tmp_path / "a.tgz"

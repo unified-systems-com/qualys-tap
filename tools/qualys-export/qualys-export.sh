@@ -3,6 +3,8 @@
 # entries (API 4.0) for the Qualys TAP plugin. Every request is a GET with TLS verification on.
 # Needs: bash, curl, python3, and a Qualys user with the "API Access" permission.
 # Usage: QUALYS_API=https://<your platform API host> ./qualys-export.sh ["<asset group title>"]; see README.md
+# Scope (optional, at most one): QUALYS_AG_IDS, QUALYS_AG_TITLES, QUALYS_TAG_IDS or QUALYS_TAG_NAMES, each a
+# comma-separated list; QUALYS_TAG_MATCH=any|all says whether a host needs any or all of the tags (default any).
 # Output: qualys-export-<UTC time>.tgz in the current directory. It contains IPs, hostnames and
 # AWS account ids: send it over the agreed secure channel, not email.
 set -euo pipefail
@@ -35,7 +37,47 @@ if ! printf '%s' "$HOST" | grep -Eq '^qualysapi\.([a-z0-9-]+\.)*qualys(ksa)?\.(c
   fi
   echo "warning: sending credentials to '$HOST', which is not a public Qualys platform host (QUALYS_ALLOW_OTHER_HOST=1)" >&2
 fi
-AG=${1:-}
+# The scope narrows which hosts Qualys returns, for example to the tags or asset groups that stand for
+# particular AWS accounts. Validated here, before the password prompt; the result is the query suffix
+# the detection read carries and the scope export.json records.
+SCOPE_OUT=$(python3 -I - "${1:-}" <<'PY'
+import json, os, re, sys
+from urllib.parse import quote
+given = {k: os.environ.get(k, "").strip() for k in ("QUALYS_AG_IDS", "QUALYS_AG_TITLES", "QUALYS_TAG_IDS", "QUALYS_TAG_NAMES")}
+if sys.argv[1]:  # the positional asset-group title, kept from the first version of this script
+    if given["QUALYS_AG_TITLES"]:
+        sys.exit("give the asset-group title either as the argument or as QUALYS_AG_TITLES, not both")
+    given["QUALYS_AG_TITLES"] = sys.argv[1]
+set_ = {k: v for k, v in given.items() if v}
+if len(set_) > 1:
+    sys.exit("set at most one of QUALYS_AG_IDS, QUALYS_AG_TITLES, QUALYS_TAG_IDS, QUALYS_TAG_NAMES")
+match = os.environ.get("QUALYS_TAG_MATCH", "any").strip() or "any"
+if match not in ("any", "all"):
+    sys.exit("QUALYS_TAG_MATCH must be any or all")
+if not set_:
+    print(json.dumps({"query": "", "scope": None})); sys.exit()
+(name, raw), = set_.items()
+values = [v.strip() for v in raw.split(",")]
+if not all(values):
+    sys.exit(f"{name} has an empty entry")
+kind, is_ids = {"QUALYS_AG_IDS": ("asset_group_ids", True), "QUALYS_AG_TITLES": ("asset_group_titles", False),
+                "QUALYS_TAG_IDS": ("tag_ids", True), "QUALYS_TAG_NAMES": ("tag_names", False)}[name]
+if is_ids and not all(re.fullmatch(r"[0-9]+", v) for v in values):
+    sys.exit(f"{name} must be comma-separated numeric ids")
+joined = quote(",".join(values), safe=",")
+if kind == "asset_group_ids":
+    query = f"&ag_ids={joined}"
+elif kind == "asset_group_titles":
+    query = f"&ag_titles={joined}"
+else:
+    query = f"&use_tags=1&tag_set_by={'id' if is_ids else 'name'}&tag_include_selector={match}&tag_set_include={joined}"
+scope = {"kind": kind, "values": values}
+if kind.startswith("tag_"):
+    scope["tag_match"] = match
+print(json.dumps({"query": query, "scope": scope}))
+PY
+) || exit 1
+SCOPE_QUERY=$(printf '%s' "$SCOPE_OUT" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["query"])')
 
 read -rp 'Qualys username: ' QU
 read -rsp 'Password: ' QP; echo
@@ -69,7 +111,7 @@ get() {  # $1=url $2=outfile. GET only, no redirects followed, waits out 409 thr
 
 # 1) Host detections: all four statuses, result text, ignored and disabled included, EC2 metadata.
 URL="$API/api/6.0/fo/asset/host/vm/detection/?action=list&status=New,Active,Re-Opened,Fixed&show_results=1&show_reopened_info=1&include_ignored=1&include_disabled=1&show_asset_id=1&host_metadata=ec2&show_cloud_tags=1&show_qds=1&truncation_limit=1000"
-[ -n "$AG" ] && URL="$URL&ag_titles=$(python3 -I -c 'import sys,urllib.parse as u; print(u.quote(sys.argv[1]))' "$AG")"
+URL="$URL$SCOPE_QUERY"
 n=1
 while [ -n "$URL" ]; do
   f=$(printf 'hld-%04d.xml' "$n"); get "$URL" "$f"
@@ -105,13 +147,13 @@ get_optional "$API/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_outpu
 
 # 4) What this archive is: where it came from, when, and how it was asked for. The collector
 # reads this to tell which subscription the files belong to. No credential is written.
-python3 -I - "$API" "$AG" "$KB_COMPLETE" <<'PY'
+python3 -I - "$API" "$SCOPE_OUT" "$KB_COMPLETE" <<'PY'
 import datetime, glob, json, sys
 json.dump({
     "description": "Qualys TAP export manifest: provenance of the files in this archive",
-    "script_version": 1,
+    "script_version": 2,
     "api_host": sys.argv[1],
-    "asset_group": sys.argv[2] or None,
+    "scope": json.loads(sys.argv[2])["scope"],
     "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "detection_api": "6.0",
     "knowledgebase_api": "4.0",

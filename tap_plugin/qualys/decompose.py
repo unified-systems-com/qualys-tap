@@ -226,7 +226,9 @@ def _want_ec2(host_ref: str, host: dict[str, Any], wanted: dict[str, str], resul
     resource = host.get("cloud_resource_id")
     if host.get("cloud_provider") == "AWS" and host.get("cloud_service") == "EC2" and resource:
         wanted[host_ref] = resource
-    elif host.get("ec2_instance_id"):
+    elif host.get("ec2_instance_id") and not (host.get("cloud_provider") or host.get("cloud_service") or resource):
+        # Only the deprecated field, with no cloud fields to say what the host is: counted, never linked. A host
+        # whose cloud fields name another provider or service is not an EC2 host and is not counted at all.
         result.count("ec2_unresolved")
         result.count("ec2_unresolved_deprecated_field")
 

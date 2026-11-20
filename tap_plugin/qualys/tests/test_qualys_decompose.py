@@ -285,7 +285,10 @@ class TestEc2Link:
         ],
     )
     def test_aws_ec2_only(self, cloud: bytes) -> None:
-        assert _ec2_edges(decompose(_run(), _page_with(cloud), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))) == []
+        result = decompose(_run(), _page_with(cloud), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))
+        assert _ec2_edges(result) == []
+        # Not an EC2 host, so not an unresolved one either, though the deprecated field is filled.
+        assert "ec2_unresolved" not in result.counters
 
     def test_deprecated_field_never_links(self) -> None:
         # An Azure-shaped id in the deprecated field, with no cloud fields: counted unresolved, never linked.

@@ -46,7 +46,8 @@ One archive in the current directory, `qualys-export-<UTC time>.tgz`, holding:
 ## If something goes wrong
 
 - **`HTTP 401`**: the username or password is wrong, or the user lacks the API Access permission.
-- **`HTTP 403`, or an error on the `kb-` step**: the knowledge-base API may need to be enabled for your subscription by Qualys Support. Send us the archive anyway with the detections in it, and tell us.
+- **`knowledge-base read failed; continuing without it`**: often an `HTTP 403`, because the knowledge-base API may need to be enabled for your subscription by Qualys Support. The script carries on, still produces the archive with the detections in it, and records `"knowledgebase_complete": false` in `export.json`. Send it, and tell us.
+- **`is not a Qualys platform API host`**: the script only sends your password to a Qualys platform API host, such as `qualysapi.qg2.apps.qualys.com`. Check the host against the platform identification page. A private-cloud deployment on its own host can set `QUALYS_ALLOW_OTHER_HOST=1`.
 - **An error mentioning `/api/6.0/`**: your subscription may not offer version 6.0 yet. Tell us, and we will send a version for 5.0.
 - **`unexpected next-page URL, stopping`**: Qualys returned a next-page link that pointed somewhere other than the detection API. The script refuses to follow it. Send us the files written so far, which are in the `qualys-export-<time>` directory.
 

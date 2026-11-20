@@ -11,6 +11,18 @@ umask 077   # everything this script writes is readable by you alone
 API=${QUALYS_API:?set QUALYS_API to your platform API host, see https://www.qualys.com/platform-identification/}
 API=${API%/}
 case "$API" in https://*) ;; *) echo "QUALYS_API must start with https://" >&2; exit 1 ;; esac
+# The password goes to whatever host QUALYS_API names, so refuse a host that is not a Qualys platform
+# API host (see https://www.qualys.com/platform-identification/). A private-cloud deployment on its own
+# host sets QUALYS_ALLOW_OTHER_HOST=1, deliberately.
+HOST=${API#https://}; HOST=${HOST%%:*}
+if ! printf '%s' "$HOST" | grep -Eq '^qualysapi\.([a-z0-9-]+\.)*qualys(ksa)?\.(com|eu|in|ca|ae|co\.uk|com\.au)$'; then
+  if [ "${QUALYS_ALLOW_OTHER_HOST:-}" != 1 ]; then
+    echo "QUALYS_API host '$HOST' is not a Qualys platform API host; refusing to send your password there." >&2
+    echo "For a private-cloud deployment on another host, set QUALYS_ALLOW_OTHER_HOST=1." >&2
+    exit 1
+  fi
+  echo "warning: sending credentials to '$HOST', which is not a public Qualys platform host (QUALYS_ALLOW_OTHER_HOST=1)" >&2
+fi
 AG=${1:-}
 
 read -rp 'Qualys username: ' QU
@@ -55,10 +67,14 @@ done
 
 # 2) KnowledgeBase entries for the QIDs seen, 500 per request.
 python3 -I -c 'import glob,xml.etree.ElementTree as E; print("\n".join(sorted({q.text.strip() for f in glob.glob("hld-*.xml") for q in E.parse(f).iter("QID") if q.text}, key=int)))' > qids.txt
+# A knowledge-base failure (often a 403: the API may need enabling by Qualys Support) does not stop
+# the export: the detections are still worth sending, and export.json records that the KB is incomplete.
+KB_COMPLETE=true
 if [ -s qids.txt ]; then
   split -l 500 qids.txt qchunk-
   for c in qchunk-*; do
-    get "$API/api/4.0/fo/knowledge_base/vuln/?action=list&details=All&show_disabled_flag=1&ids=$(paste -sd, "$c")" "kb-${c#qchunk-}.xml"
+    get "$API/api/4.0/fo/knowledge_base/vuln/?action=list&details=All&show_disabled_flag=1&ids=$(paste -sd, "$c")" "kb-${c#qchunk-}.xml" \
+      || { KB_COMPLETE=false; echo "knowledge-base read failed; continuing without it" >&2; }
   done
   rm -f qchunk-*
 else
@@ -75,7 +91,7 @@ get_optional "$API/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_outpu
 
 # 4) What this archive is: where it came from, when, and how it was asked for. The collector
 # reads this to tell which subscription the files belong to. No credential is written.
-python3 -I - "$API" "$AG" <<'PY'
+python3 -I - "$API" "$AG" "$KB_COMPLETE" <<'PY'
 import datetime, glob, json, sys
 json.dump({
     "description": "Qualys TAP export manifest: provenance of the files in this archive",
@@ -87,6 +103,7 @@ json.dump({
     "knowledgebase_api": "4.0",
     "detection_pages": len(glob.glob("hld-*.xml")),
     "knowledgebase_files": len(glob.glob("kb-*.xml")),
+    "knowledgebase_complete": sys.argv[3] == "true",
 }, open("export.json", "w"), indent=2)
 PY
 

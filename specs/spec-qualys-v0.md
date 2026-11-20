@@ -65,24 +65,24 @@ Eight consequences shape v0:
 
 | RID | Name | Status | Notes |
 | --- | --- | --- | --- |
-| req-qualys-connection | [Connection And Credential](#connection-and-credential) | Proposed | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
-| req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | Proposed | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
-| req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | Proposed | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
-| req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | Proposed | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
-| req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Proposed | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
-| req-qualys-observe | [The Observation Command](#the-observation-command) | Proposed | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
-| req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | Proposed | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
-| req-qualys-detection-read | [The Detection Read](#the-detection-read) | Proposed | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
-| req-qualys-subscription-run | [Subscription And Scan Run](#subscription-and-scan-run) | Proposed | The subscription node and one scan run per collection, with probe, filter, watermark, scopes not read, counters and warnings |
-| req-qualys-host | [Hosts](#hosts) | Proposed | A node per host as Qualys tracks it, with its cloud fields |
-| req-qualys-detection | [Detections](#detections) | Proposed | A node per detection keyed by subscription, host id, QID and unique vulnerability id, with Qualys's fields and result text as returned |
-| req-qualys-qid | [Knowledge-Base Records](#knowledge-base-records) | Proposed | A node per QID seen, from knowledge base 4.0, with CVSS and the CVE list; linked to each CVE's shared vulnerability record |
-| req-qualys-ec2-link | [EC2 Instance Link](#ec2-instance-link) | Proposed | A host links to `aws_core`'s EC2 instance by exact `CLOUD_RESOURCE_ID` with provider AWS, only when it exists; never written; optional dependency |
-| req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | Proposed | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
-| req-qualys-parsers | [Result Parsers](#result-parsers) | Proposed | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
-| req-qualys-package-link | [Package Link](#package-link) | Proposed | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
-| req-qualys-file-import | [Export Archive Import](#export-archive-import) | Proposed | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
-| req-qualys-fips | [FIPS Posture](#fips-posture) | Proposed | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
+| req-qualys-connection | [Connection And Credential](#connection-and-credential) | Approved for Development | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
+| req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | Approved for Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
+| req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | Approved for Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
+| req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | Approved for Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
+| req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
+| req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
+| req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | Approved for Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
+| req-qualys-detection-read | [The Detection Read](#the-detection-read) | Approved for Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
+| req-qualys-subscription-run | [Subscription And Scan Run](#subscription-and-scan-run) | Approved for Development | The subscription node and one scan run per collection, with probe, filter, watermark, scopes not read, counters and warnings |
+| req-qualys-host | [Hosts](#hosts) | Approved for Development | A node per host as Qualys tracks it, with its cloud fields |
+| req-qualys-detection | [Detections](#detections) | Approved for Development | A node per detection keyed by subscription, host id, QID and unique vulnerability id, with Qualys's fields and result text as returned |
+| req-qualys-qid | [Knowledge-Base Records](#knowledge-base-records) | Approved for Development | A node per QID seen, from knowledge base 4.0, with CVSS and the CVE list; linked to each CVE's shared vulnerability record |
+| req-qualys-ec2-link | [EC2 Instance Link](#ec2-instance-link) | Approved for Development | A host links to `aws_core`'s EC2 instance by exact `CLOUD_RESOURCE_ID` with provider AWS, only when it exists; never written; optional dependency |
+| req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | Approved for Development | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
+| req-qualys-parsers | [Result Parsers](#result-parsers) | Approved for Development | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
+| req-qualys-package-link | [Package Link](#package-link) | Approved for Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
+| req-qualys-file-import | [Export Archive Import](#export-archive-import) | Approved for Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
+| req-qualys-fips | [FIPS Posture](#fips-posture) | Approved for Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
 | req-qualys-scan-list | Scan List | Backlog | The scans Qualys ran, as nodes a detection's last scan can point at |
 | req-qualys-ignored-disabled | Acting On Ignored And Disabled | Backlog | What a consumer should make of `IS_IGNORED` and `IS_DISABLED`; v0 stores both flags and acts on neither |
@@ -94,13 +94,13 @@ Eight consequences shape v0:
 | req-qualys-neutral-scanner | Scanner And Run In The Neutral Shape | Backlog | The subscription and runs also written as `compliance_core`'s scanner and scan-run types |
 | req-qualys-reconciler | Cross-Source Reconciliation | Backlog | Linking Qualys's hosts and detections to other scanners' views by evidence-carrying edges, never merges |
 | req-qualys-report-import | Host Based Findings Import | Backlog | A parser for the Host Based Findings XML report, for a person with console access but no API access (ruled 2026-11-20, Q9c) |
-| req-qualys-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | What this plugin deliberately does not do, and who owns it |
+| req-qualys-nongoals | [v0 Non-Goals](#v0-non-goals) | Approved for Development | What this plugin deliberately does not do, and who owns it |
 
 ### Connection And Credential
 ----
 RID: `req-qualys-connection`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 How the collector knows which Qualys subscription to read and how to authenticate. The settings and the credential live together in one operator-owned secret envelope per subscription, never in a field on a grid node. Whoever can edit a node must not be able to point a credential at another host or quietly narrow what a compliance view sees.
 
@@ -112,9 +112,9 @@ The secret is a plugin secret: its consumer is the Qualys collector, so the enve
 - `subscription`: an operator-chosen label naming the subscription, such as `acme-prod`. Required. Qualys is a shared service, so many subscriptions answer on one API host, and the host alone cannot identify one. Whether Qualys reports a subscription identifier the plugin could read instead is open in the observation ledger (`subscription-identity`).
 - `username`, `password`: a Qualys user with the Reader role and the API Access permission, without UI access where the subscription allows. Required.
 - `ca_bundle`: the absolute path of a PEM file on the host, never its contents. Optional.
-- `scope`: optional server-side filters, an object with at most one of `asset_group_ids` (a list of integers) or `tag_ids` (a list of integers), sent as Qualys's `ag_ids` or tag filter. The scope is recorded on every run (`req-qualys-detection-read`).
+- `scope`: optional server-side filters, an object with at most one of `asset_group_ids` (a list of integers) or `tag_ids` (a list of integers), sent as Qualys's `ag_ids` or tag filter. The scope is the subscription's **standing scope**: it is recorded on the subscription node and on every run, and a read made with it is a complete read of that scope (`req-qualys-detection-read`, `req-qualys-states`).
 
-The envelope's description states the least-privilege shape: a Reader with API access only, scoped to the asset groups or tags that hold the in-scope AWS hosts. The collector reads every envelope in scope `qualys`. Each yields one subscription node, keyed by the canonical `api_host` and the `subscription` label together (`req-qualys-subscription-run`). An envelope that fails validation fails only its own run, naming `qualys:<key>`. These credentials have no scannable shape: a Qualys username carries a subscription prefix but no issuer marker, and the password is free text. So no `CredentialPattern` and no entropy rule is added. Protection rests on the envelope layer, the leak guard, `.gitignore` and redaction. The credential reaches `requests` as an auth tuple, never in a URL. No object holding it shows it in its `__repr__`, and no log line, scan-run field or exception carries a value.
+The envelope's description states the least-privilege shape: a Reader with API access only, scoped to the asset groups or tags that hold the in-scope AWS hosts. The collector reads every envelope in scope `qualys`. Each yields one subscription node, keyed by the canonical `api_host` and the `subscription` label together, encoded without ambiguity (`req-qualys-subscription-run`). An envelope that fails validation fails only its own run, naming `qualys:<key>`. These credentials have no scannable shape: a Qualys username carries a subscription prefix but no issuer marker, and the password is free text. So no `CredentialPattern` and no entropy rule is added. Protection rests on the envelope layer, the leak guard, `.gitignore` and redaction. The credential reaches `requests` as an auth tuple, never in a URL. No object holding it shows it in its `__repr__`, and no log line, scan-run field or exception carries a value.
 
 #### Acceptance Criteria
 
@@ -131,7 +131,7 @@ The envelope's description states the least-privilege shape: a Reader with API a
 ----
 RID: `req-qualys-transport`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 How requests leave the plugin. A small client of our own over `requests`. Every request passes through one `requests.Session` subclass whose `send` decides what may be sent.
 
@@ -176,7 +176,7 @@ Responses are bounded before parsing: a body over 256 MiB is refused, and so is 
 ----
 RID: `req-qualys-probe`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 Before reading data in earnest, the collector checks that the credential works and the pinned version answers, and records what the subscription says about itself, so a detection can be judged against the read behind it.
 
@@ -201,7 +201,7 @@ The probe is the first detection page with `truncation_limit=1`. It is an ordina
 ----
 RID: `req-qualys-contract-extract`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 A committed extract of the part of Qualys's output DTDs this plugin reads, produced by a script and never typed, and tests that check the parser against it with no network. The plugin's `ci` boot record excludes network access, so nothing in the normal suite calls Qualys.
 
@@ -209,7 +209,7 @@ A committed extract of the part of Qualys's output DTDs this plugin reads, produ
 
 `tap_plugin/qualys/contract/extract.json`, with a JSON Schema and a `description` on the top level and every entry. `tap_plugin/qualys/contract/reduce.py` produces it from a DTD and the element paths named in `contract/consumed.json`: each consumed element, its content model, its attributes and whether each is required. The committed sources are the host detection 6.0 output DTD and the knowledge base 4.0 output DTD, under `tests/vendor/`, with `provenance.json` recording where each came from, the fetch date and its hash. The first copies come from the DTDs an export archive carries or, failing that, from Qualys's DTD reference ([DTD](https://cdn2.qualys.com/docs/qualys-api-vmpc-dtd-reference.pdf)), marked as such. `contract/build.py` regenerates the extract, and `--check` tests it.
 
-Every response is checked against the extract before any node is written. A required element that is missing or malformed fails that page. An element the extract does not name is tolerated and not stored. The reducer takes a DTD as data and never resolves an external entity or fetches anything. It refuses a document over a fixed size and treats a parameter-entity cycle as an error.
+Every response is checked against the extract before any node is written. A required element that is missing or malformed fails that page. An element the extract does not name is tolerated and not stored. The reducer takes a DTD as data and never resolves an external entity or fetches anything. It refuses a document over a fixed size, treats a parameter-entity cycle as an error, and bounds expansion: at most 1,000 parameter-entity references expanded and at most 1 MiB of expanded text per document, so an acyclic chain cannot grow exponentially.
 
 #### Acceptance Criteria
 
@@ -218,14 +218,14 @@ Every response is checked against the extract before any node is written. A requ
 | req-qualys-contract-extract-1 | Generated, Not Typed | Proposed | The extract is the reducer's output from the committed DTDs; a test regenerates it and compares. | |
 | req-qualys-contract-extract-2 | No Network In The Suite | Proposed | The plugin's tests open no socket; the client and parser run against fixtures. | |
 | req-qualys-contract-extract-3 | Validate Before Write | Proposed | A page whose required elements fail the extract writes nothing; a required scope that fails is an error, an optional one is recorded as not read. | |
-| req-qualys-contract-extract-4 | Reducer Is Bounded | Proposed | The reducer refuses an external entity, an entity cycle and an oversized document, each without any I/O of its own; tests feed each case. | |
+| req-qualys-contract-extract-4 | Reducer Is Bounded | Proposed | The reducer refuses an external entity, an entity cycle, an oversized document and an acyclic exponential parameter-entity chain, each without any I/O of its own; tests feed each case. | Codex, PR #5. |
 | req-qualys-contract-extract-5 | Malformed Knowledge Base Is A Recorded Failure | Proposed | A knowledge-base page that is not well-formed is recorded as not read for its QIDs, and the run continues. | QualysETL release notes. |
 
 ### Scheduled Drift Check
 ----
 RID: `req-qualys-drift-ci`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 A scheduled workflow compares the DTDs Qualys serves with the committed sources, reduces both with the same reducer, and fails when what the plugin reads has changed.
 
@@ -251,7 +251,7 @@ No credential is ever placed in CI.
 ----
 RID: `req-qualys-observe`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 A tool for whoever tests against a real subscription. It reads a subscription through the read-only client in a fixed order, records every raw response locally, and reports which entries in the open-assumptions ledger the responses answered. It is not the collector and writes nothing to the grid.
 
@@ -297,7 +297,7 @@ Recordings are never committed. A fixture is committed only after the operator h
 ----
 RID: `req-qualys-states`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 How the collector records absence and change. Every place absence can occur has three outcomes, and the plugin keeps them apart. A detection resolves on Qualys's word alone.
 
@@ -314,7 +314,7 @@ A field nothing observed is `null`, an observed-empty list is `[]`, and an obser
 
 **Resolution.** A detection's state follows Qualys's `STATUS` as returned (`New`, `Active`, `Re-Opened`, `Fixed`) and is stored exactly. It is `resolved` exactly when Qualys reports `Fixed`, with `resolution_source: qualys_fixed` and Qualys's `LAST_FIXED_DATETIME`. When a later read reports the same detection `Re-Opened` or `Active`, it reopens. A detection absent from a read never changes state, whatever the read's scope: absence in a window read means only "not processed in this window", and absence in a complete read has no meaning Qualys has documented (ruled 2026-11-20, Q7c). Nothing is deleted.
 
-**Withdrawn hosts.** A host Qualys no longer reports in a complete, unfiltered read of a subscription is marked `withdrawn`, with the run that saw it gone. Its detections keep the state they had, because a host leaving the subscription is not evidence that anything on it was fixed. A host that returns becomes `current`. A window read, a filtered read and a failed read withdraw nothing.
+**Withdrawn hosts.** A host Qualys no longer reports in a complete read of the subscription's standing scope is marked `withdrawn`, with the run that saw it gone. A complete read has no time window and no filter beyond the standing scope, which is the least-privilege setup this spec recommends, so withdrawal works under it. Its detections keep the state they had, because a host leaving the scope or the subscription is not evidence that anything on it was fixed. A host that returns becomes `current`. A window read, a read narrower than the standing scope, a failed read and the first read after the standing scope changed withdraw nothing.
 
 QID nodes carry no `state`: they are reference data, not assertions.
 
@@ -326,14 +326,14 @@ QID nodes carry no `state`: they are reference data, not assertions.
 | req-qualys-states-2 | Null Is Unobserved | Proposed | A field the response did not carry is `null`, never `""`, `0` or `false`. | |
 | req-qualys-states-3 | Only Fixed Resolves | Proposed | A detection is `resolved` only when Qualys reports it `Fixed`; a test drops a detection from a complete read and finds it unchanged. | Ruled 2026-11-20 (Q7c). |
 | req-qualys-states-4 | Re-Opened Reopens | Proposed | A resolved detection that Qualys reports `Re-Opened` or `Active` becomes open again, with every other field updated as returned. | |
-| req-qualys-states-5 | Withdrawn Host, Untouched Detections | Proposed | A host absent from a complete unfiltered read becomes `withdrawn` and none of its detections change state; a window or filtered read withdraws nothing. | Ruled 2026-11-20 (Q7c). |
+| req-qualys-states-5 | Withdrawn Host, Untouched Detections | Proposed | A host absent from a complete read of the standing scope becomes `withdrawn` and none of its detections change state; a window read, a narrower read and the first read after a scope change withdraw nothing; a test sets a standing asset-group scope and withdraws a host that left the group. | Ruled 2026-11-20 (Q7c). Grok, PR #5: the recommended scoped setup must still reach withdrawal. |
 | req-qualys-states-6 | Nothing Is Deleted | Proposed | No run deletes a node the plugin wrote. | |
 
 ### The Detection Read
 ----
 RID: `req-qualys-detection-read`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 What one run asks Qualys for, and how a run knows where the last one stopped.
 
@@ -341,7 +341,7 @@ What one run asks Qualys for, and how a run knows where the last one stopped.
 
 Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1` and `show_qds=1`, plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
 
-The first run for a subscription is **complete**: no time filter. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed or stopped early does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
+The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed or stopped early does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
 
 The run records:
 
@@ -364,13 +364,13 @@ The run records:
 ----
 RID: `req-qualys-subscription-run`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 The record of which subscription was read and what each collection did.
 
 #### Implementation
 
-- `qualys_subscription` (`qualys.area: run`): one per envelope, keyed by `subscription_key`, the canonical `api_host` and the `subscription` label joined. It carries the watermark, the time of the last complete read and the API versions last used.
+- `qualys_subscription` (`qualys.area: run`): one per envelope, keyed by `subscription_key`: the compact JSON array `[canonical api_host, subscription label]`, never a delimiter join, so no two (host, label) pairs encode alike. It carries the watermark, the standing scope, the time of the last complete read and the API versions last used.
 - `qualys_scan_run` (`qualys.area: run`): one per collection, keyed `(subscription_key, run_id)` with a `run_id` the collector mints once per run, so every edge a run's batch writes resolves to one run node. It carries:
   - `source` (`api` or `file`);
   - the probe results;
@@ -394,7 +394,7 @@ The record of which subscription was read and what each collection did.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
-| req-qualys-subscription-run-1 | One Subscription Per Envelope | Proposed | The subscription key is the canonical API host and the label; two labels on one host are two subscriptions. | |
+| req-qualys-subscription-run-1 | One Subscription Per Envelope | Proposed | The subscription key is the JSON array of the canonical API host and the label; two labels on one host are two subscriptions, and a test shows that pairs whose concatenations match (`("a.b", "c")` and `("a", "b.c")`) give different keys. | Codex, PR #5. |
 | req-qualys-subscription-run-2 | Run Records Its Source | Proposed | Every run records `source` as `api` or `file`, with the export manifest's time for a file. | |
 | req-qualys-subscription-run-3 | Warnings Defined Once | Proposed | Every warning code a run can record is in the table above; a test fails on an unlisted code. | |
 
@@ -402,7 +402,7 @@ The record of which subscription was read and what each collection did.
 ----
 RID: `req-qualys-host`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 A host as Qualys tracks it. This is Qualys's view of a machine, not the machine itself. The EC2 instance is `aws_core`'s, and this node links to it (`req-qualys-ec2-link`).
 
@@ -430,7 +430,7 @@ A host as Qualys tracks it. This is Qualys's view of a machine, not the machine 
 ----
 RID: `req-qualys-detection`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 One detection: Qualys's assertion that a QID was found on a host.
 
@@ -464,7 +464,7 @@ Edges: `DETECTED_ON_HOST__qualys` (detection to host), `ABOUT_QID__qualys` (dete
 ----
 RID: `req-qualys-qid`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 What a QID means, from Qualys's knowledge base: its title, severity, scores and the CVEs it names.
 
@@ -498,7 +498,7 @@ A QID a detection names but the knowledge base did not return is recorded on the
 ----
 RID: `req-qualys-ec2-link`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 How a Qualys host reaches the EC2 instance it is. `aws_core` collects EC2 instances from AWS itself, the source of record, so the provider collector wins and this plugin only links (ruled 2026-11-20, Q2a; the Anchore stage-one rule).
 
@@ -525,7 +525,7 @@ For a host whose `CLOUD_PROVIDER` is `AWS` and whose `CLOUD_SERVICE` is `EC2`, t
 ----
 RID: `req-qualys-neutral`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 The shared vulnerability page reads `compliance_core`'s types, not each scanner's. The rule ruled on 2026-11-17 for every scanner applies: a scanner writes the neutral finding beside its own records, may create the shared vulnerability record when it is absent, and uses its own CVSS score where the record has none. Qualys's QID fan-out sets the unit to the host and the CVE, as for Tenable.
 
@@ -534,7 +534,7 @@ The shared vulnerability page reads `compliance_core`'s types, not each scanner'
 For each CVE in the CVE list of the QID of an open detection on a Qualys host, there is one `compliance_core__compliance_finding`, keyed `(source, source_key)`:
 
 - `source` is `qualys`;
-- `source_key` is the SHA-256 of the subscription key, the host id and the CVE id.
+- `source_key` is the SHA-256 of the compact JSON array `[subscription_key, host_id, cve_id]` encoded as UTF-8, never of a concatenation, so distinct triples cannot collide by framing.
 
 Two QIDs naming one CVE on one host make one neutral finding. Its status is `open` while any detection on that host whose QID names the CVE is open. It becomes `resolved` once every such detection is resolved under `req-qualys-states`, that is, once Qualys reported each one Fixed. Its name says the CVE and the host. Its summary gives the highest Qualys severity among the detections naming it, and `first_detected_at` the earliest `FIRST_FOUND_DATETIME` among them.
 
@@ -550,7 +550,7 @@ Edges:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
-| req-qualys-neutral-1 | One Per Host And CVE | Proposed | Two QIDs naming one CVE on one host give one neutral finding with source `qualys` and two detail edges; a second run writes no second finding or edge. | |
+| req-qualys-neutral-1 | One Per Host And CVE | Proposed | Two QIDs naming one CVE on one host give one neutral finding with source `qualys` and two detail edges; a second run writes no second finding or edge; the source key is a digest of a JSON array, and a test shows triples whose concatenations match give different keys. | |
 | req-qualys-neutral-2 | Status Follows Qualys's Fixed | Proposed | The neutral finding is `open` while any detection naming the CVE on the host is open, and `resolved` once Qualys has reported every one Fixed. | |
 | req-qualys-neutral-3 | Carried By The Package Or The Host | Proposed | The carrier is the package a parser resolved, else the Qualys host; after a run with authority, a changed carrier leaves exactly one edge. | Ruled 2026-11-20 (Q7b). |
 | req-qualys-neutral-4 | An Absent Record Is Created | Proposed | A vulnerability record the grid does not hold is created with the CVE's exact id; an id over 128 characters gets none. | |
@@ -561,7 +561,7 @@ Edges:
 ----
 RID: `req-qualys-parsers`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 What ties a detection to a package is in its result text, not in a structured field. Qualys's package QIDs print a tab-separated table headed `Package`, `Installed Version`, `Required Version`. That shape is far more uniform across distributions than Tenable's per-plugin output, so v0 starts from one table parser with per-ecosystem version rules, under the same registry contract as Tenable's.
 
@@ -596,7 +596,7 @@ Every parser ships with a fixture at `tests/fixtures/<module>.txt` whose first l
 ----
 RID: `req-qualys-package-link`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 A detection reaches the `computing_core` package it concerns only when the parser is sure which one it is.
 
@@ -615,7 +615,7 @@ For a `parsed` observation with `mapping_unambiguous` true, `FOUND_IN_PACKAGE__q
 ----
 RID: `req-qualys-file-import`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 When nobody running the collector has API access, someone who does runs `tools/qualys-export/qualys-export.sh`. It is a standalone, read-only script with its own README, kept as simple as possible so anyone can run it (ruled 2026-11-20, Q9a). The collector loads the archive it produces onto the grid through the same code a live read uses.
 
@@ -623,14 +623,14 @@ When nobody running the collector has API access, someone who does runs `tools/q
 
 `python manage.py qualys_load <archive.tgz> --subscription <label>`, a management command beside the collector. It:
 
-1. Opens the archive without extracting outside a private temporary directory. It refuses absolute paths, `..` segments and links in the archive, and any member over the response size ceiling.
+1. Opens the archive without extracting outside a private temporary directory. Only regular files and directories are accepted: absolute paths, `..` segments, symbolic and hard links, devices and FIFOs are refused. Limits are enforced while reading, before anything is written: each member at most the response size ceiling, at most 10,000 members, at most 4 GiB expanded in total, a compression ratio of at most 100 to 1, and a wall-clock ceiling on the whole load.
 2. Reads `export.json` for the API host, the export time, the API versions and the file counts. An archive whose API versions differ from the plugin's constants, or whose counts disagree with its members, is refused.
 3. Reduces any DTDs the archive carries and compares them with the extract (`req-qualys-drift-ci-4`).
 4. Feeds the `hld-*.xml` pages and `kb-*.xml` files, in order, through the same contract check, parsers and resolution rules as a live read, and submits the same GRIFT batch.
 
 The subscription key is the archive's API host and the `--subscription` label. An operator who later runs live reads uses the same label in the envelope, so the two line up. The run records `source: file`, the manifest's `created_at` as the read time, and the archive's SHA-256.
 
-An archive made with an asset group is a filtered read, and one made without is a complete read, so the withdrawal rules of `req-qualys-states` apply to it unchanged. A file load never advances the live watermark. Loading an archive older than the subscription's newest recorded read changes no state and is refused unless `--allow-older` is given, in which case it only adds what the grid does not hold. That way an old file can never reopen what a newer read showed fixed.
+The archive's `asset_group` is its scope. It is a complete read when that scope equals the subscription's standing scope (an archive's group name is compared with the standing scope's), and otherwise a narrower read, so the withdrawal rules of `req-qualys-states` apply to it unchanged. A file load never advances the live watermark. An archive older than the subscription's newest recorded read is refused, with no override: an old file must not reopen what a newer read showed fixed, nor add detections a newer read no longer showed.
 
 The script is part of this requirement's surface. Its allowlist of reads is the transport's, written out in shell. It keeps TLS verification on and the password off the command line, and it drops cookies from the saved headers. A change to what it requests is a change to this spec.
 
@@ -639,16 +639,16 @@ The script is part of this requirement's surface. Its allowlist of reads is the 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
 | req-qualys-file-import-1 | Same Path As A Live Read | Proposed | A recorded set of pages loaded from an archive and the same pages read through a faked transport produce the same nodes and edges, apart from the run's source fields. | |
-| req-qualys-file-import-2 | Archive Is Untrusted | Proposed | Absolute paths, `..`, links and oversized members are refused before anything is read; tests feed each. | |
+| req-qualys-file-import-2 | Archive Is Untrusted | Proposed | Absolute paths, `..`, links, devices, FIFOs, an oversized member, too many members, too many expanded bytes and a compression bomb are each refused before anything is written; tests feed each. | Codex, PR #5. |
 | req-qualys-file-import-3 | Manifest Checked | Proposed | An archive whose versions or counts disagree with the plugin or with its own members is refused, naming the mismatch. | |
-| req-qualys-file-import-4 | Older Archive Cannot Reopen | Proposed | Without `--allow-older`, an archive older than the newest recorded read is refused; with it, no existing node changes state. | |
+| req-qualys-file-import-4 | Older Archive Is Refused | Proposed | An archive older than the subscription's newest recorded read is refused, with no override, and changes nothing. | Grok, PR #5: an override could still add stale detections. |
 | req-qualys-file-import-5 | Script Stays Read-Only | Proposed | A test reads the script and fails if it requests a path not on the transport's allowlist, sends a method other than GET, or disables TLS verification. | A source check, since the script is shell. |
 
 ### FIPS Posture
 ----
 RID: `req-qualys-fips`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 What the plugin declares about its cryptography.
 
@@ -666,7 +666,7 @@ The client is `requests`, which reaches TLS through Python's `ssl` module and th
 ----
 RID: `req-qualys-nongoals`
 
-Status: `Proposed`
+Status: `Approved for Development`
 
 What this plugin deliberately does not do, and who owns it instead.
 

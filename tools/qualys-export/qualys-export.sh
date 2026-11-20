@@ -6,6 +6,7 @@
 # Output: qualys-export-<UTC time>.tgz in the current directory. It contains IPs, hostnames and
 # AWS account ids: send it over the agreed secure channel, not email.
 set -euo pipefail
+umask 077   # everything this script writes is readable by you alone
 
 API=${QUALYS_API:?set QUALYS_API to your platform API host, see https://www.qualys.com/platform-identification/}
 API=${API%/}
@@ -26,7 +27,9 @@ OUT=qualys-export-$(date -u +%Y%m%dT%H%M%SZ); mkdir "$OUT"; cd "$OUT"
 get() {  # $1=url $2=outfile. GET only, no redirects followed, waits out 409 throttling.
   local code w tries=0
   while :; do
-    code=$(curl -sS --proto =https --config "$CFG" -H 'X-Requested-With: tap-qualys-export' \
+    # -q must come first: it stops curl reading ~/.curlrc, which could otherwise turn off TLS
+    # verification or follow redirects. The --no- options state the same thing explicitly.
+    code=$(curl -q --no-insecure --no-location -sS --proto =https --config "$CFG" -H 'X-Requested-With: tap-qualys-export' \
            -D "$2.headers" -o "$2" -w '%{http_code}' "$1")
     # Drop any cookie Qualys sets, so no session token ends up in the archive.
     grep -iv '^set-cookie:' "$2.headers" > "$2.headers.tmp" || true; mv "$2.headers.tmp" "$2.headers"
@@ -64,8 +67,11 @@ fi
 
 # 3) The DTDs, so the files can be validated against exactly what Qualys served. Locations are
 # documented but unverified, so a failure here is not fatal.
-get "$API/api/6.0/fo/asset/host/vm/detection/dtd/output.dtd" hld-output.dtd || true
-get "$API/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd" kb.dtd || true
+get_optional() {  # like get, but on failure leaves nothing behind, so a saved error page never poses as a DTD
+  get "$1" "$2" || { rm -f "$2" "$2.headers"; echo "not served: $2 (not an error)" >&2; }
+}
+get_optional "$API/api/6.0/fo/asset/host/vm/detection/dtd/output.dtd" hld-output.dtd
+get_optional "$API/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd" kb.dtd
 
 # 4) What this archive is: where it came from, when, and how it was asked for. The collector
 # reads this to tell which subscription the files belong to. No credential is written.

@@ -22,6 +22,8 @@ To export only one asset group, give its title as the argument:
 QUALYS_API=https://qualysapi.qg2.apps.qualys.com ./qualys-export.sh "AWS Production"
 ```
 
+Every file the script writes, including the final archive, is readable by your user alone. It ignores any personal curl settings (`~/.curlrc`), so nothing on your machine can turn TLS verification off or make it follow a redirect.
+
 The script asks for your Qualys username and password. The password is never put on the command line, where other users of the machine could see it. It goes into a private temporary file, which is deleted when the script exits.
 
 A large subscription can take a while. Qualys limits how many API calls a subscription may make, and when the script hits that limit it waits the time Qualys asks for and carries on. You will see `throttled (409), waiting …` when that happens.

@@ -102,17 +102,26 @@ def _top_level_items(model: str) -> tuple[str, list[str]]:
 
 
 def required_children(model: str) -> list[str]:
-    """The child elements a content model requires: plain names in a sequence with no ``?`` or ``*``."""
-    model = " ".join(model.split())
+    """The child elements a content model requires, in order.
+
+    In a sequence, a plain name with no ``?`` or ``*`` is required, and so is every name a nested group
+    requires when that group is itself required (no ``?`` or ``*``). A choice requires none of its branches,
+    and an optional or repeatable-zero group requires nothing.
+    """
+    model = "".join(model.split())
     if model in ("EMPTY", "ANY") or "#PCDATA" in model:
         return []
-    sep, items = _top_level_items(model)
-    if sep == "|" or model.rstrip().endswith(("*", "?")):
+    if model.endswith(("*", "?")):
         return []
-    out = []
+    sep, items = _top_level_items(model)
+    if sep == "|":
+        return []
+    out: list[str] = []
     for item in items:
         if re.fullmatch(_NAME + r"\+?", item):
             out.append(item.rstrip("+"))
+        elif item.startswith("("):
+            out.extend(required_children(item))
     return out
 
 

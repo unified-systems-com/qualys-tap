@@ -85,6 +85,15 @@ class TestRefused:
         with pytest.raises(PageRefused, match="HOST lacks required ID"):
             parse_detection_page(body)
 
+    @pytest.mark.parametrize(
+        ("old", "new", "missing"),
+        [('<QDS severity="MEDIUM">', "<QDS>", "severity"), ('<QDS_FACTOR name="CVSS">', "<QDS_FACTOR>", "name")],
+    )
+    def test_missing_required_attribute(self, old: str, new: str, missing: str) -> None:
+        body = _read("hld-ec2-assembled.xml").replace(old.encode(), new.encode())
+        with pytest.raises(PageRefused, match=f"required attribute {missing}"):
+            parse_detection_page(body)
+
     def test_entity_declaration_refused(self) -> None:
         body = b'<?xml version="1.0"?><!DOCTYPE X [<!ENTITY a "aaaa"><!ENTITY b "&a;&a;&a;">]><HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>&b;</DATETIME></RESPONSE></HOST_LIST_VM_DETECTION_OUTPUT>'
         with pytest.raises(PageRefused, match="refused XML construct"):

@@ -218,15 +218,31 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     warnings: list[dict[str, str]] = []
 
     # The subscription and the run.
-    held = grid.subscription(key) or {}
-    standing = run.standing_scope if run.standing_scope is not None else (held.get("standing_scope") or {})
+    stored = grid.subscription(key)
+    held = stored or {}
+    # The scope a complete read is judged against is the one the grid already holds. A run that brings a
+    # new standing scope records it, but the first read under a changed scope withdraws nothing
+    # (req-qualys-states), so a run can never authorise its own withdrawals by changing the scope.
+    held_scope = held.get("standing_scope") or {}
+    scope_changed = stored is not None and run.standing_scope is not None and (run.standing_scope or {}) != held_scope
+    standing = held_scope if stored is not None else (run.standing_scope or {})
     read_kind = run.read_kind
-    # A complete read is one with no filter beyond the standing scope; anything else claiming to be complete
-    # is treated as narrower, so a mislabelled run can never withdraw a host it was not asked about.
-    if read_kind == COMPLETE and (run.applied_filter or {}) != (standing or {}):
-        read_kind = NARROWER
-        warnings.append({"code": "READ_KIND_DOWNGRADED", "detail": "labelled complete, but its filter is not the standing scope"})
+    if read_kind == COMPLETE:
+        reason = None
+        if scope_changed:
+            reason = "the standing scope changed in this run"
+        elif (run.applied_filter or {}) != standing:
+            reason = "labelled complete, but its filter is not the standing scope"
+        elif not pages:
+            reason = "labelled complete, but it read no detection page"
+        elif pages[-1].next_url:
+            reason = "labelled complete, but its last page links to a next page that was not read"
+            warnings.append({"code": "TRUNCATED", "detail": "the last detection page carries a next-page link"})
+        if reason:
+            read_kind = NARROWER
+            warnings.append({"code": "READ_KIND_DOWNGRADED", "detail": reason})
     sub_fields = {
+        **{k: v for k, v in held.items() if k in QualysSubscription.FIELD_CRUD_SCHEMA},
         "api_host": run.api_host,
         "subscription_label": run.label,
         "subscription_key": key,

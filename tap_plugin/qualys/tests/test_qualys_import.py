@@ -37,7 +37,10 @@ def _load(kind: str, detection_xml: bytes, at: datetime) -> Run:
 
 
 def _assembled() -> bytes:
-    return (FIXTURES / "hld-ec2-assembled.xml").read_bytes()
+    """The assembled page without its next-page link, so a complete read of it is whole."""
+    body = (FIXTURES / "hld-ec2-assembled.xml").read_bytes()
+    start, end = body.index(b"<WARNING>"), body.index(b"</WARNING>") + len(b"</WARNING>")
+    return body[:start] + body[end:]
 
 
 @pytest.mark.django_db

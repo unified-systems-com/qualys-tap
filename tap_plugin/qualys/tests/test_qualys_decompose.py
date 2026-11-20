@@ -42,6 +42,13 @@ def _pages() -> list:
     return [parse_detection_page((FIXTURES / "hld-ec2-assembled.xml").read_bytes())]
 
 
+def _complete_pages() -> list:
+    """The assembled page without its next-page link: a whole read, as a complete read must be."""
+    body = (FIXTURES / "hld-ec2-assembled.xml").read_bytes()
+    start, end = body.index(b"<WARNING>"), body.index(b"</WARNING>") + len(b"</WARNING>")
+    return [parse_detection_page(body[:start] + body[end:])]
+
+
 def _kb() -> list:
     return [parse_knowledgebase_page((FIXTURES / "kb-documented.xml").read_bytes())]
 
@@ -93,13 +100,13 @@ class TestWithdrawal:
     STORED = {"subscription_key": KEY, "host_id": "2002", "ip": "10.0.9.9", "dns": None, "state": "current", "os": "Amazon Linux 2"}
 
     def test_complete_read_withdraws_a_host_it_did_not_see(self) -> None:
-        result = decompose(_run(COMPLETE), _pages(), _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
+        result = decompose(_run(COMPLETE), _complete_pages(), _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
         withdrawn = [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
         assert withdrawn == [{**self.STORED, "state": "withdrawn", "withdrawn_in_run": result.nodes[-1]["node"]["run_id"]}]
         assert result.counters["hosts_withdrawn"] == 1
 
     def test_withdrawal_rewrites_every_stored_field(self) -> None:
-        result = decompose(_run(COMPLETE), _pages(), _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
+        result = decompose(_run(COMPLETE), _complete_pages(), _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
         (withdrawn,) = [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
         assert withdrawn["os"] == "Amazon Linux 2"  # the grid replaces whole nodes, so nothing is dropped
 
@@ -126,8 +133,28 @@ class TestWithdrawal:
         (run_node,) = _nodes(result, "qualys__qualys_scan_run")
         assert run_node["read_kind"] == NARROWER and run_node["warnings"][0]["code"] == "READ_KIND_DOWNGRADED"
 
+    def test_truncated_complete_read_withdraws_nothing(self) -> None:
+        pages = _pages()  # the assembled page ends on a next-page link
+        result = decompose(_run(COMPLETE), pages, _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
+        assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+        (run_node,) = _nodes(result, "qualys__qualys_scan_run")
+        assert {w["code"] for w in run_node["warnings"]} >= {"TRUNCATED", "READ_KIND_DOWNGRADED"}
+
+    def test_no_pages_withdraws_nothing(self) -> None:
+        result = decompose(_run(COMPLETE), [], [], FakeGrid(hosts={"2002": dict(self.STORED)}))
+        assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+
+    def test_a_run_cannot_authorise_its_own_withdrawals_by_changing_scope(self) -> None:
+        run = _run(COMPLETE, standing_scope={"tag_ids": [7]})
+        run.applied_filter = {"tag_ids": [7]}
+        grid = FakeGrid(hosts={"2002": dict(self.STORED)}, sub={"standing_scope": {"tag_ids": [1]}})
+        result = decompose(run, _complete_pages(), _kb(), grid)
+        assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+        (sub,) = _nodes(result, "qualys__qualys_subscription")
+        assert sub["standing_scope"] == {"tag_ids": [7]}  # the new scope is recorded for the next read
+
     def test_complete_read_records_its_time(self) -> None:
-        (sub,) = _nodes(decompose(_run(COMPLETE), _pages(), _kb(), FakeGrid()), "qualys__qualys_subscription")
+        (sub,) = _nodes(decompose(_run(COMPLETE), _complete_pages(), _kb(), FakeGrid()), "qualys__qualys_subscription")
         assert sub["last_complete_read_at"] == "2026-11-20T18:00:00+00:00"
 
 
@@ -171,7 +198,7 @@ class TestEdgesAndRun:
         assert about["edge"]["to_key"]["key"]["subscription_key"] == KEY
 
     def test_run_records_source_kind_and_read_time(self) -> None:
-        (run,) = _nodes(decompose(_run(archive_sha256="ab" * 32), _pages(), _kb(), FakeGrid()), "qualys__qualys_scan_run")
+        (run,) = _nodes(decompose(_run(archive_sha256="ab" * 32), _complete_pages(), _kb(), FakeGrid()), "qualys__qualys_scan_run")
         assert run["source"] == "file" and run["read_kind"] == COMPLETE and run["read_at"] == "2026-11-20T18:00:00+00:00"
         assert run["archive_sha256"] == "ab" * 32 and run["counters"]["detections"] == 4
 

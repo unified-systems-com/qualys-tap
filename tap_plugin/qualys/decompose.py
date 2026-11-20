@@ -43,6 +43,7 @@ _PARSED_TIMES = {
     "last_vm_auth_scanned_date": "last_vm_auth_scanned_at",
 }
 _DETECTION_KEY = ("host_id", "qid", "unique_vuln_id")
+EC2_INSTANCE_TYPE = "aws_core__aws_ec2_instance"
 
 
 class GridView(Protocol):
@@ -55,6 +56,10 @@ class GridView(Protocol):
         ...
 
     def held_qids(self, key: str, qids: Iterable[str]) -> set[str]: ...
+
+    def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
+        """Of these ids, those ``aws_core`` holds as an EC2 instance's ``instance_id``; None without ``aws_core``."""
+        ...
 
 
 @dataclass
@@ -212,6 +217,39 @@ def _keyable(value: Any, model: type[dj_models.Model], name: str) -> bool:
     return isinstance(value, str) and value != "" and _fit(model, name, value)[1] is None
 
 
+def _want_ec2(host_ref: str, host: dict[str, Any], wanted: dict[str, str], result: Result) -> None:
+    """Note a host's EC2 instance id when Qualys says it is one (req-qualys-ec2-link-1, -5).
+
+    Only ``CLOUD_RESOURCE_ID`` with provider AWS and service EC2 links. ``EC2_INSTANCE_ID`` is deprecated and
+    also carries Azure ids, so a host that has only it is counted unresolved and never linked.
+    """
+    resource = host.get("cloud_resource_id")
+    if host.get("cloud_provider") == "AWS" and host.get("cloud_service") == "EC2" and resource:
+        wanted[host_ref] = resource
+    elif host.get("ec2_instance_id"):
+        result.count("ec2_unresolved")
+        result.count("ec2_unresolved_deprecated_field")
+
+
+def _link_ec2(wanted: dict[str, str], grid: GridView, result: Result) -> list[dict[str, str]]:
+    """``TRACKS_EC2_INSTANCE__qualys`` to each instance ``aws_core`` holds; the instance is never written (-2, -3, -4)."""
+    if not wanted:
+        return []
+    held = grid.ec2_instances(set(wanted.values()))
+    if held is None:
+        return [{"code": "AWS_CORE_ABSENT", "detail": f"aws_core is not installed; {len(wanted)} EC2 host(s) not looked up"}]
+    for host_ref, instance_id in sorted(wanted.items()):
+        if instance_id in held:
+            link = edge_to_key(f"e-ec2-{host_ref}", "TRACKS_EC2_INSTANCE__qualys", host_ref, EC2_INSTANCE_TYPE, {"instance_id": instance_id})
+            link["edge"]["properties"] = {"source_field": "CLOUD_RESOURCE_ID"}
+            result.edges.append(link)
+            result.count("ec2_linked")
+        else:
+            result.count("ec2_unresolved")
+    missing = sum(1 for instance_id in wanted.values() if instance_id not in held)
+    return [{"code": "EC2_UNRESOLVED", "detail": f"{missing} EC2 host(s) name an instance aws_core does not hold"}] if missing else []
+
+
 def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBasePage], grid: GridView) -> Result:
     """Every node and edge one run writes, from its pages and what the grid already holds."""
     result = Result()
@@ -259,6 +297,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
 
     # Hosts and detections.
     seen_hosts: set[str] = set()
+    ec2_wanted: dict[str, str] = {}
     seen_detections: set[tuple[str, str, str]] = set()
     qids_named: set[str] = set()
     for number, page in enumerate(pages):
@@ -275,6 +314,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             else:
                 seen_hosts.add(host_id)
                 result.nodes.append(_host_node(host_ref, key, host, result))
+                _want_ec2(host_ref, host, ec2_wanted, result)
             for detection in host["detections"]:
                 parts = (host_id, detection.get("qid"), detection.get("unique_vuln_id"))
                 if not (_keyable(parts[1], QualysDetection, "qid") and parts[1].isdigit() and _keyable(parts[2], QualysDetection, "unique_vuln_id")):
@@ -296,6 +336,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             result.scopes_not_read.append({"scope": f"detection page {number + 1}", "reason": "partly read: an entry had no usable key"})
     result.count("hosts", len(seen_hosts))
     result.count("detections", len(seen_detections))
+    warnings.extend(_link_ec2(ec2_wanted, grid, result))
 
     # Knowledge-base records. A QID not returned is written as a stub only where the grid holds none, so a
     # record an earlier read filled is never wiped by a read that did not return it.

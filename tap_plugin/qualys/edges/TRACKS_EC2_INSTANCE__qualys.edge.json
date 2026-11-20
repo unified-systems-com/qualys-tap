@@ -6,7 +6,7 @@
     "qualys__qualys_host"
   ],
   "targets": [
-    "aws_core__ec2_instance"
+    "aws_core__aws_ec2_instance"
   ],
   "identity": {
     "discriminators": []

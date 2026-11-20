@@ -77,7 +77,7 @@ Eight consequences shape v0:
 | req-qualys-host | [Hosts](#hosts) | In Development | A node per host as Qualys tracks it, with its cloud fields |
 | req-qualys-detection | [Detections](#detections) | In Development | A node per detection keyed by subscription, host id, QID and unique vulnerability id, with Qualys's fields and result text as returned |
 | req-qualys-qid | [Knowledge-Base Records](#knowledge-base-records) | In Development | A node per QID seen, from knowledge base 4.0, with CVSS and the CVE list; linked to each CVE's shared vulnerability record |
-| req-qualys-ec2-link | [EC2 Instance Link](#ec2-instance-link) | Approved for Development | A host links to `aws_core`'s EC2 instance by exact `CLOUD_RESOURCE_ID` with provider AWS, only when it exists; never written; optional dependency |
+| req-qualys-ec2-link | [EC2 Instance Link](#ec2-instance-link) | In Development | A host links to `aws_core`'s EC2 instance by exact `CLOUD_RESOURCE_ID` with provider AWS, only when it exists; never written; optional dependency |
 | req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | Approved for Development | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
 | req-qualys-parsers | [Result Parsers](#result-parsers) | Approved for Development | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
 | req-qualys-package-link | [Package Link](#package-link) | Approved for Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
@@ -501,13 +501,13 @@ A QID a detection names but the knowledge base did not return is recorded on the
 ----
 RID: `req-qualys-ec2-link`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 How a Qualys host reaches the EC2 instance it is. `aws_core` collects EC2 instances from AWS itself, the source of record, so the provider collector wins and this plugin only links (ruled 2026-11-20, Q2a; the Anchore stage-one rule).
 
 #### Implementation
 
-For a host whose `CLOUD_PROVIDER` is `AWS` and whose `CLOUD_SERVICE` is `EC2`, the plugin looks up `aws_core__ec2_instance` by its natural key, `instance_id`, using the exact string in `CLOUD_RESOURCE_ID`.
+For a host whose `CLOUD_PROVIDER` is `AWS` and whose `CLOUD_SERVICE` is `EC2`, the plugin looks up `aws_core__aws_ec2_instance` by its natural key, `instance_id`, using the exact string in `CLOUD_RESOURCE_ID`.
 
 - **Found:** it draws `TRACKS_EC2_INSTANCE__qualys` from the host to the instance, carrying the field the id came from. It changes nothing on the instance.
 - **Not found:** the host is counted on the run as unresolved, with `EC2_UNRESOLVED`. Nothing is created.
@@ -519,7 +519,7 @@ For a host whose `CLOUD_PROVIDER` is `AWS` and whose `CLOUD_SERVICE` is `EC2`, t
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
 | req-qualys-ec2-link-1 | Exact Id, AWS Only | Proposed | The link is drawn only when `CLOUD_PROVIDER` is `AWS`, `CLOUD_SERVICE` is `EC2`, and `CLOUD_RESOURCE_ID` equals an instance's `instance_id` exactly. | |
-| req-qualys-ec2-link-2 | Instance Never Written | Proposed | No node or field of `aws_core__ec2_instance` is written by this plugin. | Stage one. |
+| req-qualys-ec2-link-2 | Instance Never Written | Proposed | No node or field of `aws_core__aws_ec2_instance` is written by this plugin. | Stage one. |
 | req-qualys-ec2-link-3 | Unresolved Is Counted | Proposed | A host naming an instance the grid does not hold is counted on the run and does not fail it. | |
 | req-qualys-ec2-link-4 | Optional Dependency | Proposed | Without `aws_core` installed, no lookup is made, the run records `AWS_CORE_ABSENT`, and the run succeeds. | |
 | req-qualys-ec2-link-5 | Deprecated Field Never Links | Proposed | A host carrying only `EC2_INSTANCE_ID` draws no link, and a test gives it an Azure-shaped id. | `RN1012`. |
@@ -712,6 +712,6 @@ A design-time catalog, superseded by the manifest once the plugin ships.
 | `ABOUT_QID__qualys` | detection → QID | none | What the detection means. |
 | `LAST_SEEN_IN_RUN__qualys` | host or detection → scan run | none | The run that last read it, moved each run. |
 | `ABOUT_VULNERABILITY__qualys` | QID → `compliance_vulnerability` | none | One per CVE in the QID's list; drawn from the QID, never the detection. |
-| `TRACKS_EC2_INSTANCE__qualys` | host → `aws_core__ec2_instance` | `source_field` | Qualys's host is that instance, by exact id; the instance is never written. |
+| `TRACKS_EC2_INSTANCE__qualys` | host → `aws_core__aws_ec2_instance` | `source_field` | Qualys's host is that instance, by exact id; the instance is never written. |
 | `FOUND_IN_PACKAGE__qualys` | detection → `computing_core__package` | none | Only when a parser is sure. |
 | `DETAILS_COMPLIANCE_FINDING__qualys` | detection → `compliance_finding` | none | Which Qualys detections stand behind a neutral finding. |

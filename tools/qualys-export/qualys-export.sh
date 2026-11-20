@@ -43,7 +43,8 @@ read -rsp 'Password: ' QP; echo
 # Credentials go in a private curl config file, never on the command line (where ps can see
 # them). Quotes and backslashes are escaped so any password works.
 esc() { local s=${1//\\/\\\\}; printf '%s' "${s//\"/\\\"}"; }
-CFG=$(mktemp); chmod 600 "$CFG"; trap 'rm -f "$CFG"' EXIT
+CFG=$(mktemp); case "$CFG" in /*) ;; *) CFG="$PWD/$CFG" ;; esac   # absolute: the script changes directory later
+chmod 600 "$CFG"; trap 'rm -f "$CFG"' EXIT
 printf 'user = "%s:%s"\n' "$(esc "$QU")" "$(esc "$QP")" > "$CFG"; unset QP
 
 OUT=qualys-export-$(date -u +%Y%m%dT%H%M%SZ); mkdir "$OUT"; cd "$OUT"

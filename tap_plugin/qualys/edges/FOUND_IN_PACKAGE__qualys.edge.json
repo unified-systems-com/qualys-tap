@@ -1,0 +1,17 @@
+{
+  "slug": "FOUND_IN_PACKAGE__qualys",
+  "name": "Found In Package",
+  "description": "A parser read from this detection's result text that it concerns this installed package, and was sure which one (req-qualys-package-link). The package is computing_core's, created with its key fields when the grid holds none.",
+  "sources": [
+    "qualys__qualys_detection"
+  ],
+  "targets": [
+    "computing_core__package"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "finding"
+  }
+}

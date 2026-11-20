@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "description": "qualys CI record (req-boot-bootstrap-ci-record): the stack this plugin's own tests run in, and the one claim per-plugin CI is allowed to make: that qualys is correct against the dependencies it DECLARES and nothing else. Install set is exactly the depends_on closure, pinned to released tags: computing_core (packages), compliance_core (the neutral finding and vulnerability record) and aws_core, which qualys declares optional (the EC2 instance it links to; req-qualys-ec2-link) and which validate_plugin --strict requires the record to install. The consumer flips the self entry to editable so the CHECKOUT under test runs, not the pinned revision. Population is empty: no step seeds data. DELIBERATELY EXCLUDED: every other plugin, all credentials, all required_secrets, and any population step that reaches the network (req-boot-bootstrap-ci-record-5).",
+  "install": {
+    "plugins": [
+      {
+        "slug": "computing_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/computing-core-tap",
+          "rev": "v0.10.8",
+          "commit": "f244539e7626cb8996238b32a53f0010eafe09d0"
+        }
+      },
+      {
+        "slug": "compliance_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/compliance-core-tap",
+          "rev": "v0.8.13",
+          "commit": "4169092e43aeb60ab23919688890318b584ea1a0"
+        }
+      },
+      {
+        "slug": "aws_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/aws-core-tap",
+          "rev": "v0.8.3",
+          "commit": "a10b9335d6f91fd85a34e4255271f09017276e82"
+        }
+      },
+      {
+        "slug": "qualys",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/qualys-tap",
+          "rev": "main",
+          "commit": "644c339698b1be9a71f6971b503e66b2f22a1d64"
+        }
+      }
+    ]
+  },
+  "population": {
+    "on_failure": "abort",
+    "steps": []
+  }
+}

@@ -1,0 +1,48 @@
+manifest_version = "0"
+plugin_version = "0.1.0" # x-release-please-version
+requires_tap = ">=0.4.0"
+slug = "qualys"
+name = "Qualys TAP"
+description = "Qualys VMDR host detections, from Cloud Agents and scanner appliances, and the QID knowledge base behind them, read-only and held on the grid as Qualys returns them, linked to the AWS EC2 instances they concern."
+
+# Tier-1 load order (req-tap-plugin-arch-dependencies). The qualys edges name computing_core's package,
+# compliance_core's vulnerability and finding, and aws_core's EC2 instance: vocabulary dependencies
+# (new-plugin Step 6, Tier 1b), declared here with a note. No module imports any of them.
+depends_on = [
+  { slug = "computing_core", note = "FOUND_IN_PACKAGE__qualys targets computing_core__package; the collector creates an absent package a parser is sure of, with its key fields only (req-qualys-package-link)" },
+  { slug = "compliance_core", note = "ABOUT_VULNERABILITY__qualys targets compliance_core__compliance_vulnerability and DETAILS_COMPLIANCE_FINDING__qualys targets compliance_core__compliance_finding; the collector writes the neutral finding per Qualys host and CVE and creates an absent vulnerability record (req-qualys-neutral)" },
+  { slug = "aws_core", optional = true, note = "TRACKS_EC2_INSTANCE__qualys targets aws_core__ec2_instance, looked up by exact instance_id and never written; without aws_core no lookup is made and the run records AWS_CORE_ABSENT (req-qualys-ec2-link)" },
+]
+
+# The author's DECLARED crypto posture (req-tap-plugin-manifest-v0-fips; spec-fips.md declare-vs-decide).
+# requests reaches TLS through Python's ssl module and the system OpenSSL; defusedxml is pure Python
+# (req-qualys-fips). A declaration to be checked: validate_plugin's crypto-providers report is the arbiter.
+[fips]
+status = "compatible"
+
+[models]
+qualys__qualys_subscription = "tap_plugin.qualys.models.subscription.QualysSubscription"
+qualys__qualys_scan_run = "tap_plugin.qualys.models.scan_run.QualysScanRun"
+qualys__qualys_host = "tap_plugin.qualys.models.host.QualysHost"
+qualys__qualys_detection = "tap_plugin.qualys.models.detection.QualysDetection"
+qualys__qualys_qid = "tap_plugin.qualys.models.qid.QualysQid"
+
+[edges]
+RUN_OF_SUBSCRIPTION__qualys = "edges/RUN_OF_SUBSCRIPTION__qualys.edge.json"
+DETECTED_ON_HOST__qualys = "edges/DETECTED_ON_HOST__qualys.edge.json"
+ABOUT_QID__qualys = "edges/ABOUT_QID__qualys.edge.json"
+LAST_SEEN_IN_RUN__qualys = "edges/LAST_SEEN_IN_RUN__qualys.edge.json"
+ABOUT_VULNERABILITY__qualys = "edges/ABOUT_VULNERABILITY__qualys.edge.json"
+TRACKS_EC2_INSTANCE__qualys = "edges/TRACKS_EC2_INSTANCE__qualys.edge.json"
+FOUND_IN_PACKAGE__qualys = "edges/FOUND_IN_PACKAGE__qualys.edge.json"
+DETAILS_COMPLIANCE_FINDING__qualys = "edges/DETAILS_COMPLIANCE_FINDING__qualys.edge.json"
+
+[grift]
+# Declares qualys.area, the key qualys stamps on its own types: dimensions are declared, never minted,
+# and writes refuse an undeclared name (tap PR 1196).
+dimension = "grift/dimension.grift.json"
+
+[[boot.records]]
+name = "ci"
+description = "RESERVED NAME (req-boot-bootstrap-ci-record): the stack this plugin's own tests run in - depends_on closure + self, offline, credential-free. The consumer flips self to editable."
+sha256 = "4453599659d41dbcf21accc2d4b9f103ddcc11cb223989184b35e054b8a4b5bc"

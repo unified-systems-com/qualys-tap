@@ -1,0 +1,28 @@
+# Thin caller of core's reusable per-repo CI (req-tap-plugin-extdev-repo-ci). Two pins,
+# independent (req-tap-plugin-extdev-repo-ci-9): the `uses:` SHA pins WHICH validation
+# logic runs; the plugin's manifest `requires_tap` pins WHICH core it runs against; the
+# harness is core at the tag v<floor>, resolved by the workflow (req-tap-plugin-extdev-repo-ci-7).
+# The in-package tap_plugin/qualys/boot/ci.boot.json is the opt-in (req-boot-bootstrap-ci-record-6).
+# The `uses:` pin is tap main at 7046904b47c0 (2026-11-20), the same pin as the AI-review shims.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tap:
+    # A job-level block replaces the top-level one, so it restates contents: read. plugin-ci
+    # uploads its dependency scan as SARIF, which needs security-events: write; GitHub refuses
+    # the whole call at startup without it (tap#772). Never contents: write.
+    permissions:
+      contents: read
+      security-events: write
+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@7046904b47c021e2040ee06fd634e4dbcbd553a7
+    with:
+      plugin_slug: qualys

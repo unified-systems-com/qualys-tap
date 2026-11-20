@@ -1,0 +1,32 @@
+{
+  "slug": "TRACKS_EC2_INSTANCE__qualys",
+  "name": "Tracks EC2 Instance",
+  "description": "This Qualys host is that EC2 instance: Qualys reported its CLOUD_RESOURCE_ID with CLOUD_PROVIDER AWS and CLOUD_SERVICE EC2, and aws_core holds an instance with exactly that instance_id. Drawn only when the instance exists; the instance is never written (req-qualys-ec2-link). The target is closed to aws_core's EC2 instance type, an optional vocabulary dependency declared in depends_on: aws_core collects the source of record and no neutral compute-instance type exists to target instead.",
+  "sources": [
+    "qualys__qualys_host"
+  ],
+  "targets": [
+    "aws_core__ec2_instance"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "property_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "source_field"
+    ],
+    "properties": {
+      "source_field": {
+        "enum": [
+          "CLOUD_RESOURCE_ID"
+        ],
+        "description": "The Qualys field the instance id was read from. Only CLOUD_RESOURCE_ID links; the deprecated EC2_INSTANCE_ID never does (req-qualys-ec2-link-5)."
+      }
+    }
+  },
+  "default_dimensions": {
+    "qualys.area": "observation"
+  }
+}

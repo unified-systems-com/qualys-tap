@@ -1,0 +1,24 @@
+# Nightly self-test (req-tap-plugin-extdev-repo-ci-12): a thin caller of core's plugin-nightly.yml,
+# which runs this plugin against core main and turns a red night into one issue the next green closes.
+# Only what cannot move lives here: the schedule (a called workflow's own triggers are not consulted),
+# the cron minute staggered per repo, the slug, the pin and the grant.
+name: nightly
+on:
+  schedule:
+    - cron: "17 11 * * *"   # minute staggered per repo so the org's nightlies do not burst
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nightly:
+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@7046904b47c021e2040ee06fd634e4dbcbd553a7
+    # Required on this job: GitHub checks every job of the called tree against this grant before
+    # starting. security-events: write is plugin-ci's SARIF upload; issues: write is the owner-issue
+    # job, the only write in the tree.
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    with:
+      plugin_slug: qualys
+      assignee: notgeorge   # the org's maintainer login, as in the sibling plugins

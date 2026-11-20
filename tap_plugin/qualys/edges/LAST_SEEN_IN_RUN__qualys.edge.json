@@ -1,0 +1,18 @@
+{
+  "slug": "LAST_SEEN_IN_RUN__qualys",
+  "name": "Last Seen In Run",
+  "description": "The collector run that last read this host or detection. One edge per record, moved to the newest run each time and retired from the old run by edge authority, so a run never becomes a super-node (req-qualys-host, req-qualys-detection).",
+  "sources": [
+    "qualys__qualys_host",
+    "qualys__qualys_detection"
+  ],
+  "targets": [
+    "qualys__qualys_scan_run"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "run"
+  }
+}

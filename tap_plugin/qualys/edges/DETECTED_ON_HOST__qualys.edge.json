@@ -1,0 +1,17 @@
+{
+  "slug": "DETECTED_ON_HOST__qualys",
+  "name": "Detected On Host",
+  "description": "Qualys found this detection on this host. Every detection has exactly one, to the Qualys host whose ID is part of the detection's key (req-qualys-detection).",
+  "sources": [
+    "qualys__qualys_detection"
+  ],
+  "targets": [
+    "qualys__qualys_host"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "finding"
+  }
+}

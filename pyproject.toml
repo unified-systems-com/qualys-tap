@@ -1,0 +1,56 @@
+# Qualys TAP plugin: package-mode distribution, standalone from the first commit.
+#
+# Identity chain (pre-boot conformance gate enforces agreement):
+#   slug             = "qualys"
+#   distribution     = "qualys-tap"                 (the -tap convention)
+#   import namespace = "tap_plugin.qualys"          (PEP 420: no tap_plugin/__init__.py)
+#   entry-point key  = "qualys"                     (== slug)
+#
+# Spec: specs/spec-qualys-v0.md.
+[project]
+name = "qualys-tap"
+description = "Qualys TAP plugin: Qualys VMDR host detections and the QID knowledge base, read-only, linked to the AWS EC2 instances they concern."
+requires-python = ">=3.14"
+dynamic = ["version"]
+
+# Tier-0 dependencies (req-tap-plugin-arch-dependencies-1). computing_core owns the package type and
+# compliance_core the neutral finding and vulnerability record the Qualys nodes write and link to
+# (req-qualys-neutral, req-qualys-package-link). aws_core is optional (req-qualys-ec2-link) and so is
+# not a package dependency. `requests` is the read-only transport and `defusedxml` parses Qualys's
+# XML (req-qualys-transport); both are pure Python over the system OpenSSL (req-qualys-fips).
+# requests stays a range on purpose: tap's uv.lock pins it, and a plugin pin would move tap's locked
+# version (org-bots renovate/preset.js, tap#1220). defusedxml is not in tap's lock, so it is pinned
+# exactly, as the fleet's Renovate rule pins every other third-party runtime dependency.
+dependencies = [
+    "computing-core-tap",
+    "compliance-core-tap",
+    "requests>=2.34.2,<3",
+    "defusedxml==0.7.1",
+]
+
+[project.entry-points."tap.plugins"]
+qualys = "tap_plugin.qualys.apps:QualysConfig"
+
+# Developer-mode deps: the plugin's OWN dev closure (req-tap-plugin-arch-dev-deps); PEP 735,
+# never installed by boot, never in the wheel.
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "factory-boy>=3.3",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+# VCS-derived PEP 440 version (req-tap-plugin-arch-versioning-1); no hand-maintained field.
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+fallback_version = "0.0.0"
+
+# PEP 420 namespace build: ship tap_plugin/qualys/* with no tap_plugin/__init__.py.
+[tool.hatch.build.targets.wheel]
+only-include = ["tap_plugin/qualys"]

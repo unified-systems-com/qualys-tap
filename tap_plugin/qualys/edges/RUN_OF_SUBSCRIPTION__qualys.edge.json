@@ -1,0 +1,17 @@
+{
+  "slug": "RUN_OF_SUBSCRIPTION__qualys",
+  "name": "Run Of Subscription",
+  "description": "A collection run read this Qualys subscription. One edge per run, from the run to the subscription named by the envelope or the export archive (req-qualys-subscription-run).",
+  "sources": [
+    "qualys__qualys_scan_run"
+  ],
+  "targets": [
+    "qualys__qualys_subscription"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "run"
+  }
+}

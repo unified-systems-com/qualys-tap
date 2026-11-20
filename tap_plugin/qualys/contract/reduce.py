@@ -18,6 +18,8 @@ from typing import Any
 MAX_DTD_BYTES = 1 << 20
 #: Parameter-entity references expanded per document, and expanded text, are bounded (req-qualys-contract-extract-4).
 MAX_ENTITY_REFS = 1000
+#: Parameter entities nested inside one another, bounded well below Python's recursion limit.
+MAX_ENTITY_DEPTH = 32
 MAX_EXPANDED_BYTES = 1 << 20
 
 _COMMENT = re.compile(r"<!--.*?-\s*->", re.S)
@@ -57,6 +59,8 @@ def _expand_parameter_entities(text: str) -> str:
             name = m.group(1)
             if name in stack:
                 raise ReduceError(f"parameter entity cycle through %{name};")
+            if len(stack) >= MAX_ENTITY_DEPTH:
+                raise ReduceError("parameter entities nested too deeply")
             if name not in entities:
                 raise ReduceError(f"undeclared parameter entity %{name};")
             refs += 1
@@ -125,6 +129,31 @@ def required_children(model: str) -> list[str]:
     return out
 
 
+def single_children(model: str) -> list[str]:
+    """The children a content model allows at most once: names that appear once in the model, never with
+    ``*`` or ``+``, and not inside a repeatable group. A repeat of one of these is off-contract."""
+    model = "".join(model.split())
+    if model in ("EMPTY", "ANY") or "#PCDATA" in model:
+        return []
+    counts: dict[str, int] = {}
+    repeatable: set[str] = set()
+
+    def walk(group: str, repeated: bool) -> None:
+        suffix = group[-1] if group[-1] in "*+?" else ""
+        body = group[:-1] if suffix else group
+        rep = repeated or suffix in ("*", "+")
+        if body.startswith("("):
+            for item in _top_level_items(body)[1]:
+                walk(item, rep)
+        else:
+            counts[body] = counts.get(body, 0) + 1
+            if rep:
+                repeatable.add(body)
+
+    walk(model, False)
+    return [name for name, n in counts.items() if n == 1 and name not in repeatable]
+
+
 def parse_dtd(text: str) -> dict[str, dict[str, Any]]:
     """Every element the DTD declares: its content model, the children it requires, and its attributes."""
     if len(text.encode("utf-8")) > MAX_DTD_BYTES:
@@ -142,13 +171,13 @@ def parse_dtd(text: str) -> dict[str, dict[str, Any]]:
             prior = elements.get(name)
             if prior and prior["content"] != model:
                 raise ReduceError(f"element {name} declared twice with different content")
-            elements.setdefault(name, {"content": model, "required_children": required_children(model), "attributes": {}})
+            elements.setdefault(name, {"content": model, "required_children": required_children(model), "single_children": single_children(model), "attributes": {}})
         elif kind == "ATTLIST":
             parts = body.split()
             if not parts:
                 continue
             name, rest = parts[0], parts[1:]
-            target = elements.setdefault(name, {"content": None, "required_children": [], "attributes": {}})
+            target = elements.setdefault(name, {"content": None, "required_children": [], "single_children": [], "attributes": {}})
             for i in range(0, len(rest) - 2, 3):
                 target["attributes"][rest[i]] = {"type": rest[i + 1], "default": rest[i + 2]}
     return elements
@@ -173,7 +202,7 @@ def reduce(dtd_text: str, consumed: list[str], named_not_declared: dict[str, str
         elif name in named_not_declared:
             if name not in mentioned:
                 raise ReduceError(f"{name} is listed as named-but-undeclared, but no content model names it")
-            out[name] = {"content": None, "required_children": [], "attributes": {}, "declared": False, "note": named_not_declared[name]}
+            out[name] = {"content": None, "required_children": [], "single_children": [], "attributes": {}, "declared": False, "note": named_not_declared[name]}
         else:
             missing.append(name)
     stale = [name for name in named_not_declared if name in elements and elements[name]["content"] is not None]

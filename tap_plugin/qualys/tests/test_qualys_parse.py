@@ -94,6 +94,11 @@ class TestRefused:
         with pytest.raises(PageRefused, match=f"required attribute {missing}"):
             parse_detection_page(body)
 
+    def test_repeated_single_child_refused(self) -> None:
+        body = _read("hld-ec2-assembled.xml").replace(b"<ID>1001</ID>", b"<ID>1001</ID><ID>1002</ID>")
+        with pytest.raises(PageRefused, match="repeats ID"):
+            parse_detection_page(body)
+
     def test_entity_declaration_refused(self) -> None:
         body = b'<?xml version="1.0"?><!DOCTYPE X [<!ENTITY a "aaaa"><!ENTITY b "&a;&a;&a;">]><HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>&b;</DATETIME></RESPONSE></HOST_LIST_VM_DETECTION_OUTPUT>'
         with pytest.raises(PageRefused, match="refused XML construct"):

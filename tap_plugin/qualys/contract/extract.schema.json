@@ -26,11 +26,12 @@
             "description": "Each element the plugin reads, keyed by name.",
             "additionalProperties": {
               "type": "object",
-              "required": ["content", "required_children", "attributes", "declared"],
+              "required": ["content", "required_children", "single_children", "attributes", "declared"],
               "additionalProperties": false,
               "properties": {
                 "content": {"type": ["string", "null"], "description": "The DTD's content model, whitespace removed; null when the DTD names but does not declare the element."},
                 "required_children": {"type": "array", "items": {"type": "string"}, "description": "Children the content model requires."},
+                "single_children": {"type": "array", "items": {"type": "string"}, "description": "Children the content model allows at most once."},
                 "attributes": {"type": "object", "description": "The element's ATTLIST entries, by attribute name."},
                 "declared": {"type": "boolean", "description": "Whether the DTD declares the element."},
                 "note": {"type": "string", "description": "Why an undeclared element is read anyway."}

@@ -82,6 +82,10 @@ def _check(node: Element, elements: dict[str, Any], depth: int) -> None:
         missing = [c for c in decl["required_children"] if c in elements and c not in present]
         if missing:
             raise PageRefused(f"{node.tag} lacks required {', '.join(missing)}")
+        tags = [child.tag for child in node]
+        repeated = [c for c in decl.get("single_children", []) if c in elements and tags.count(c) > 1]
+        if repeated:
+            raise PageRefused(f"{node.tag} repeats {', '.join(repeated)}, which the DTD allows once")
         absent = [a for a, spec in decl["attributes"].items() if spec.get("default") == "#REQUIRED" and node.get(a) is None]
         if absent:
             raise PageRefused(f"{node.tag} lacks required attribute {', '.join(absent)}")

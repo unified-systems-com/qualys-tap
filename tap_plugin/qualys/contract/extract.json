@@ -9,7 +9,8 @@
           "content": null,
           "declared": false,
           "note": "HOST's content model names ASSET_ID? (returned with show_asset_id=1) but the published reference declares no ELEMENT for it; read as text.",
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "ATTRIBUTE": {
           "attributes": {},
@@ -19,37 +20,50 @@
             "NAME",
             "LAST_STATUS",
             "VALUE"
+          ],
+          "single_children": [
+            "NAME",
+            "LAST_STATUS",
+            "VALUE",
+            "LAST_SUCCESS_DATE",
+            "LAST_ERROR_DATE",
+            "LAST_ERROR"
           ]
         },
         "CLOUD_PROVIDER": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "CLOUD_RESOURCE_ID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "CLOUD_SERVICE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "CODE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "DETECTION": {
           "attributes": {},
@@ -59,6 +73,38 @@
             "UNIQUE_VULN_ID",
             "QID",
             "TYPE"
+          ],
+          "single_children": [
+            "UNIQUE_VULN_ID",
+            "QID",
+            "TYPE",
+            "SEVERITY",
+            "PORT",
+            "PROTOCOL",
+            "FQDN",
+            "SSL",
+            "INSTANCE",
+            "RESULTS",
+            "STATUS",
+            "FIRST_FOUND_DATETIME",
+            "LAST_FOUND_DATETIME",
+            "QDS",
+            "QDS_FACTORS",
+            "TIMES_FOUND",
+            "LAST_TEST_DATETIME",
+            "LAST_UPDATE_DATETIME",
+            "LAST_FIXED_DATETIME",
+            "FIRST_REOPENED_DATETIME",
+            "LAST_REOPENED_DATETIME",
+            "TIMES_REOPENED",
+            "SERVICE",
+            "IS_IGNORED",
+            "IS_DISABLED",
+            "AFFECT_RUNNING_KERNEL",
+            "AFFECT_RUNNING_SERVICE",
+            "AFFECT_EXPLOITABLE_CONFIG",
+            "LAST_PROCESSED_DATETIME",
+            "ASSET_CVE"
           ]
         },
         "DETECTION_LIST": {
@@ -67,37 +113,43 @@
           "declared": true,
           "required_children": [
             "DETECTION"
-          ]
+          ],
+          "single_children": []
         },
         "DNS": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "EC2": {
           "attributes": {},
           "content": "(ATTRIBUTE*)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "EC2_INSTANCE_ID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "FIRST_FOUND_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "FQDN": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "HOST": {
           "attributes": {},
@@ -105,6 +157,34 @@
           "declared": true,
           "required_children": [
             "ID",
+            "DETECTION_LIST"
+          ],
+          "single_children": [
+            "ID",
+            "ASSET_ID",
+            "IP",
+            "IPV6",
+            "TRACKING_METHOD",
+            "NETWORK_ID",
+            "OS",
+            "OS_CPE",
+            "DNS",
+            "DNS_DATA",
+            "CLOUD_PROVIDER",
+            "CLOUD_SERVICE",
+            "CLOUD_RESOURCE_ID",
+            "EC2_INSTANCE_ID",
+            "NETBIOS",
+            "QG_HOSTID",
+            "LAST_SCAN_DATETIME",
+            "LAST_VM_SCANNED_DATE",
+            "LAST_VM_SCANNED_DURATION",
+            "LAST_VM_AUTH_SCANNED_DATE",
+            "LAST_VM_AUTH_SCANNED_DURATION",
+            "LAST_PC_SCANNED_DATE",
+            "TAGS",
+            "METADATA",
+            "CLOUD_PROVIDER_TAGS",
             "DETECTION_LIST"
           ]
         },
@@ -114,7 +194,8 @@
           "declared": true,
           "required_children": [
             "HOST"
-          ]
+          ],
+          "single_children": []
         },
         "HOST_LIST_VM_DETECTION_OUTPUT": {
           "attributes": {},
@@ -122,133 +203,158 @@
           "declared": true,
           "required_children": [
             "RESPONSE"
+          ],
+          "single_children": [
+            "REQUEST",
+            "RESPONSE"
           ]
         },
         "ID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "IP": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "IPV6": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "IS_DISABLED": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "IS_IGNORED": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_FIXED_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_FOUND_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_PROCESSED_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_REOPENED_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_SCAN_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_STATUS": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_TEST_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_UPDATE_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_VM_AUTH_SCANNED_DATE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "LAST_VM_SCANNED_DATE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "METADATA": {
           "attributes": {},
           "content": "(EC2|GOOGLE|AZURE)+",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "NAME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "NETBIOS": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "OS": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "PORT": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "PROTOCOL": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "QDS": {
           "attributes": {
@@ -259,7 +365,8 @@
           },
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "QDS_FACTOR": {
           "attributes": {
@@ -270,19 +377,22 @@
           },
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "QDS_FACTORS": {
           "attributes": {},
           "content": "(QDS_FACTOR)*",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "QID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "RESPONSE": {
           "attributes": {},
@@ -290,79 +400,96 @@
           "declared": true,
           "required_children": [
             "DATETIME"
+          ],
+          "single_children": [
+            "DATETIME",
+            "HOST_LIST",
+            "WARNING"
           ]
         },
         "RESULTS": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "SEVERITY": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "SSL": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "STATUS": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TEXT": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TIMES_FOUND": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TIMES_REOPENED": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TRACKING_METHOD": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TYPE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "UNIQUE_VULN_ID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "URL": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "VALUE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "WARNING": {
           "attributes": {},
@@ -370,6 +497,11 @@
           "declared": true,
           "required_children": [
             "TEXT"
+          ],
+          "single_children": [
+            "CODE",
+            "TEXT",
+            "URL"
           ]
         }
       },
@@ -391,25 +523,32 @@
           },
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "CATEGORY": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "CODE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "CVE": {
           "attributes": {},
           "content": "(ID,URL)",
           "declared": true,
           "required_children": [
+            "ID",
+            "URL"
+          ],
+          "single_children": [
             "ID",
             "URL"
           ]
@@ -420,31 +559,59 @@
           "declared": true,
           "required_children": [
             "CVE"
-          ]
+          ],
+          "single_children": []
         },
         "CVSS": {
           "attributes": {},
           "content": "(BASE?,TEMPORAL?,VECTOR_STRING?,ACCESS?,IMPACT?,AUTHENTICATION?,EXPLOITABILITY?,REMEDIATION_LEVEL?,REPORT_CONFIDENCE?)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": [
+            "BASE",
+            "TEMPORAL",
+            "VECTOR_STRING",
+            "ACCESS",
+            "IMPACT",
+            "AUTHENTICATION",
+            "EXPLOITABILITY",
+            "REMEDIATION_LEVEL",
+            "REPORT_CONFIDENCE"
+          ]
         },
         "CVSS_V3": {
           "attributes": {},
           "content": "(BASE?,TEMPORAL?,VECTOR_STRING?,CVSS3_VERSION?,ATTACK?,IMPACT?,PRIVILEGES_REQUIRED?,USER_INTERACTION?,SCOPE?,EXPLOIT_CODE_MATURITY?,REMEDIATION_LEVEL?,REPORT_CONFIDENCE?)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": [
+            "BASE",
+            "TEMPORAL",
+            "VECTOR_STRING",
+            "CVSS3_VERSION",
+            "ATTACK",
+            "IMPACT",
+            "PRIVILEGES_REQUIRED",
+            "USER_INTERACTION",
+            "SCOPE",
+            "EXPLOIT_CODE_MATURITY",
+            "REMEDIATION_LEVEL",
+            "REPORT_CONFIDENCE"
+          ]
         },
         "DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "ID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "KNOWLEDGE_BASE_VULN_LIST_OUTPUT": {
           "attributes": {},
@@ -452,31 +619,39 @@
           "declared": true,
           "required_children": [
             "RESPONSE"
+          ],
+          "single_children": [
+            "REQUEST",
+            "RESPONSE"
           ]
         },
         "LAST_SERVICE_MODIFICATION_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "PATCHABLE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "PUBLISHED_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "QID": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "RESPONSE": {
           "attributes": {},
@@ -484,49 +659,65 @@
           "declared": true,
           "required_children": [
             "DATETIME"
+          ],
+          "single_children": [
+            "DATETIME",
+            "VULN_LIST",
+            "ID_SET",
+            "WARNING"
           ]
         },
         "SEVERITY_LEVEL": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TEMPORAL": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TEXT": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "TITLE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "URL": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "VECTOR_STRING": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "VENDOR_REFERENCE": {
           "attributes": {},
           "content": "(ID,URL)",
           "declared": true,
           "required_children": [
+            "ID",
+            "URL"
+          ],
+          "single_children": [
             "ID",
             "URL"
           ]
@@ -537,7 +728,8 @@
           "declared": true,
           "required_children": [
             "VENDOR_REFERENCE"
-          ]
+          ],
+          "single_children": []
         },
         "VULN": {
           "attributes": {},
@@ -551,19 +743,55 @@
             "PUBLISHED_DATETIME",
             "PATCHABLE",
             "DISCOVERY"
+          ],
+          "single_children": [
+            "QID",
+            "VULN_TYPE",
+            "SEVERITY_LEVEL",
+            "TITLE",
+            "CATEGORY",
+            "DETECTION_INFO",
+            "LAST_CUSTOMIZATION",
+            "LAST_SERVICE_MODIFICATION_DATETIME",
+            "PUBLISHED_DATETIME",
+            "BUGTRAQ_LIST",
+            "PATCHABLE",
+            "SOFTWARE_LIST",
+            "VENDOR_REFERENCE_LIST",
+            "CVE_LIST",
+            "DIAGNOSIS",
+            "DIAGNOSIS_COMMENT",
+            "CONSEQUENCE",
+            "CONSEQUENCE_COMMENT",
+            "SOLUTION",
+            "SOLUTION_COMMENT",
+            "COMPLIANCE_LIST",
+            "CORRELATION",
+            "CVSS",
+            "CVSS_V3",
+            "PCI_FLAG",
+            "AUTOMATIC_PCI_FAIL",
+            "PCI_REASONS",
+            "THREAT_INTELLIGENCE",
+            "SUPPORTED_MODULES",
+            "DISCOVERY",
+            "IS_DISABLED",
+            "CHANGE_LOG_LIST"
           ]
         },
         "VULN_LIST": {
           "attributes": {},
           "content": "(VULN*)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "VULN_TYPE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,
-          "required_children": []
+          "required_children": [],
+          "single_children": []
         },
         "WARNING": {
           "attributes": {},
@@ -571,6 +799,11 @@
           "declared": true,
           "required_children": [
             "TEXT"
+          ],
+          "single_children": [
+            "CODE",
+            "TEXT",
+            "URL"
           ]
         }
       },

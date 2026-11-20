@@ -57,10 +57,25 @@ class TestContentModels:
         assert required_children(model) == required
 
 
+@pytest.mark.parametrize(
+    ("model", "single"),
+    [("(A,B?,C*,D+)", ["A", "B"]), ("(A|B)", ["A", "B"]), ("(A,(B,C)*)", ["A"]), ("(A,A)", []), ("(#PCDATA)", [])],
+)
+def test_single_children(model: str, single: list[str]) -> None:
+    from tap_plugin.qualys.contract.reduce import single_children
+
+    assert single_children(model) == single
+
+
 class TestBounded:
     def test_external_parameter_entity_refused(self) -> None:
         with pytest.raises(ReduceError, match="external"):
             parse_dtd('<!ENTITY % x SYSTEM "http://example.invalid/x.dtd"> %x; <!ELEMENT A (#PCDATA)>')
+
+    def test_deep_linear_chain_refused_cleanly(self) -> None:
+        decls = ['<!ENTITY % e0 "X">'] + [f'<!ENTITY % e{i} "%e{i-1};">' for i in range(1, 800)]
+        with pytest.raises(ReduceError, match="nested too deeply"):
+            parse_dtd("".join(decls) + "<!ELEMENT A (%e799;)>")
 
     def test_entity_cycle_refused(self) -> None:
         with pytest.raises(ReduceError, match="cycle"):

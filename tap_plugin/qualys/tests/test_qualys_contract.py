@@ -1,5 +1,9 @@
 """The committed DTD extract and its reducer (req-qualys-contract-extract-1, -4)."""
 
+import json
+from pathlib import Path
+
+import jsonschema
 import pytest
 
 from tap_plugin.qualys.contract import build
@@ -21,6 +25,17 @@ class TestGeneratedNotTyped:
     def test_undeclared_element_is_recorded_as_such(self) -> None:
         asset = build.build()["documents"]["detection"]["elements"]["ASSET_ID"]
         assert asset["declared"] is False and asset["content"] is None and asset["note"]
+
+
+CONTRACT = Path(build.__file__).resolve().parent
+
+
+@pytest.mark.parametrize("name", ["consumed", "extract"])
+def test_described_and_schema_valid(name: str) -> None:
+    schema = json.loads((CONTRACT / f"{name}.schema.json").read_text(encoding="utf-8"))
+    data = json.loads((CONTRACT / f"{name}.json").read_text(encoding="utf-8"))
+    jsonschema.validate(data, schema)
+    assert data["description"]
 
 
 class TestContentModels:

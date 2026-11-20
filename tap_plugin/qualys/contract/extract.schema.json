@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "extract.json: the generated reduction of Qualys's output DTDs to the elements this plugin reads.",
+  "type": "object",
+  "required": ["description", "documents"],
+  "additionalProperties": false,
+  "properties": {
+    "description": {"type": "string", "minLength": 1, "description": "What this file is and that it is generated."},
+    "documents": {
+      "type": "object",
+      "description": "One entry per Qualys output document.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["description", "root", "source", "elements"],
+        "additionalProperties": false,
+        "properties": {
+          "description": {"type": "string", "description": "Which Qualys output this is."},
+          "root": {"type": "string", "description": "The document's root element."},
+          "source": {
+            "type": "object", "required": ["dtd", "sha256"], "additionalProperties": false,
+            "description": "The committed DTD the entry was reduced from.",
+            "properties": {"dtd": {"type": "string", "description": "File under tests/vendor/."}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "SHA-256 of that file."}}
+          },
+          "elements": {
+            "type": "object",
+            "description": "Each element the plugin reads, keyed by name.",
+            "additionalProperties": {
+              "type": "object",
+              "required": ["content", "required_children", "attributes", "declared"],
+              "additionalProperties": false,
+              "properties": {
+                "content": {"type": ["string", "null"], "description": "The DTD's content model, whitespace removed; null when the DTD names but does not declare the element."},
+                "required_children": {"type": "array", "items": {"type": "string"}, "description": "Children the content model requires."},
+                "attributes": {"type": "object", "description": "The element's ATTLIST entries, by attribute name."},
+                "declared": {"type": "boolean", "description": "Whether the DTD declares the element."},
+                "note": {"type": "string", "description": "Why an undeclared element is read anyway."}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

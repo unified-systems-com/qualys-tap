@@ -194,6 +194,19 @@ def _qid_node(ref: str, key: str, vuln: dict[str, Any], result: Result) -> dict[
     return envelope(ref, QualysQid, f"QID {vuln['qid']}: {title}" if title else f"QID {vuln['qid']}", fields)
 
 
+#: How many dropped values one warning names before it summarises the rest.
+_DROPPED_LISTED = 20
+
+
+def _dropped_warnings(dropped: list[dict[str, str]]) -> list[dict[str, str]]:
+    """One VALUE_DROPPED warning naming each value stored as null because its column could not hold it."""
+    if not dropped:
+        return []
+    named = "; ".join(f"{d['where']}: {d['field']} ({d['reason']})" for d in dropped[:_DROPPED_LISTED])
+    more = f"; and {len(dropped) - _DROPPED_LISTED} more" if len(dropped) > _DROPPED_LISTED else ""
+    return [{"code": "VALUE_DROPPED", "detail": f"{len(dropped)} value(s) stored as null: {named}{more}"}]
+
+
 def _keyable(value: Any, model: type[dj_models.Model], name: str) -> bool:
     return isinstance(value, str) and value != "" and _fit(model, name, value)[1] is None
 
@@ -202,20 +215,29 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     """Every node and edge one run writes, from its pages and what the grid already holds."""
     result = Result()
     key = derive_subscription_key(run.api_host, run.label)
+    warnings: list[dict[str, str]] = []
 
     # The subscription and the run.
     held = grid.subscription(key) or {}
+    standing = run.standing_scope if run.standing_scope is not None else (held.get("standing_scope") or {})
+    read_kind = run.read_kind
+    # A complete read is one with no filter beyond the standing scope; anything else claiming to be complete
+    # is treated as narrower, so a mislabelled run can never withdraw a host it was not asked about.
+    if read_kind == COMPLETE and (run.applied_filter or {}) != (standing or {}):
+        read_kind = NARROWER
+        warnings.append({"code": "READ_KIND_DOWNGRADED", "detail": "labelled complete, but its filter is not the standing scope"})
     sub_fields = {
         "api_host": run.api_host,
         "subscription_label": run.label,
         "subscription_key": key,
         "standing_scope": run.standing_scope if run.standing_scope is not None else held.get("standing_scope"),
         "watermark": held.get("watermark"),
-        "last_complete_read_at": run.started_at.isoformat() if run.read_kind == COMPLETE else held.get("last_complete_read_at"),
+        "last_complete_read_at": held.get("last_complete_read_at"),  # set below, once the read proves complete
         "detection_api_version": "6.0",
         "knowledgebase_api_version": "4.0",
     }
-    result.nodes.append(envelope("sub", QualysSubscription, run.label, sub_fields))
+    sub_node = envelope("sub", QualysSubscription, run.label, sub_fields)
+    result.nodes.append(sub_node)
 
     # Hosts and detections.
     seen_hosts: set[str] = set()
@@ -278,8 +300,10 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     result.count("qids", len(returned))
     result.count("qids_not_returned", len(missing))
 
-    # Withdrawal: only a complete read with nothing partly read can say a host is gone.
-    if run.read_kind == COMPLETE and not result.partly_read_pages:
+    # Withdrawal, and the record of a complete read: only a complete read with nothing partly read counts.
+    fully_complete = read_kind == COMPLETE and not result.partly_read_pages
+    if fully_complete:
+        sub_node["node"]["last_complete_read_at"] = (run.read_at or run.started_at).isoformat()
         for host_id, stored in sorted(grid.current_hosts(key).items()):
             if host_id in seen_hosts:
                 continue
@@ -295,14 +319,14 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         "started_at": run.started_at.isoformat(),
         "finished_at": None,
         "read_at": run.read_at.isoformat() if run.read_at else None,
-        "read_kind": run.read_kind,
+        "read_kind": read_kind,
         "applied_filter": run.applied_filter,
         "window_start": None,
         "window_end": None,
         "page_count": len(pages),
         "probe": None,
         "counters": dict(result.counters),
-        "warnings": [],
+        "warnings": warnings + _dropped_warnings(result.dropped),
         "scopes_not_read": result.scopes_not_read,
         "archive_sha256": run.archive_sha256,
         "export_created_at": parse_time(run.export_created_at),

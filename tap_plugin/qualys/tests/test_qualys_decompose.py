@@ -111,9 +111,24 @@ class TestWithdrawal:
     def test_partly_read_page_withdraws_nothing(self) -> None:
         pages = _pages()
         pages[0].hosts[0]["detections"].append({"qid": "", "unique_vuln_id": "9"})
-        result = decompose(_run(COMPLETE), pages, _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
+        held = {"last_complete_read_at": "2026-11-01T00:00:00+00:00"}
+        result = decompose(_run(COMPLETE), pages, _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}, sub=held))
         assert result.partly_read_pages == 1 and result.counters["detections_unkeyable"] == 1
         assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+        (sub,) = _nodes(result, "qualys__qualys_subscription")
+        assert sub["last_complete_read_at"] == held["last_complete_read_at"]  # a partly read run is not complete
+
+    def test_complete_label_with_a_narrower_filter_is_downgraded(self) -> None:
+        run = _run(COMPLETE)
+        run.applied_filter = {"tag_ids": [7]}
+        result = decompose(run, _pages(), _kb(), FakeGrid(hosts={"2002": dict(self.STORED)}))
+        assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+        (run_node,) = _nodes(result, "qualys__qualys_scan_run")
+        assert run_node["read_kind"] == NARROWER and run_node["warnings"][0]["code"] == "READ_KIND_DOWNGRADED"
+
+    def test_complete_read_records_its_time(self) -> None:
+        (sub,) = _nodes(decompose(_run(COMPLETE), _pages(), _kb(), FakeGrid()), "qualys__qualys_subscription")
+        assert sub["last_complete_read_at"] == "2026-11-20T18:00:00+00:00"
 
 
 class TestKnowledgeBase:
@@ -132,6 +147,18 @@ class TestKnowledgeBase:
     def test_held_qid_is_never_overwritten_by_a_stub(self) -> None:
         result = decompose(_run(), _pages(), _kb(), FakeGrid(qids={"38170"}))
         assert "38170" not in {q["qid"] for q in _nodes(result, "qualys__qualys_qid")}
+
+
+class TestDropped:
+    def test_value_a_column_cannot_hold_is_null_and_listed(self) -> None:
+        pages = _pages()
+        pages[0].hosts[0]["detections"][0]["port"] = "9" * 40  # port holds 16 characters
+        result = decompose(_run(), pages, _kb(), FakeGrid())
+        detection = next(d for d in _nodes(result, "qualys__qualys_detection") if d["qid"] == "6666666")
+        assert detection["port"] is None
+        (run_node,) = _nodes(result, "qualys__qualys_scan_run")
+        (warning,) = [w for w in run_node["warnings"] if w["code"] == "VALUE_DROPPED"]
+        assert "port (longer than 16 characters)" in warning["detail"]
 
 
 class TestEdgesAndRun:

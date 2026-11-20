@@ -25,6 +25,8 @@ WARNING_CODES = (
     "TRUNCATED",
     "EC2_UNRESOLVED",
     "AWS_CORE_ABSENT",
+    "VALUE_DROPPED",
+    "READ_KIND_DOWNGRADED",
 )
 _WARNINGS = {
     "type": ["array", "null"],

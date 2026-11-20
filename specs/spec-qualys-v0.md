@@ -66,7 +66,7 @@ Eight consequences shape v0:
 | RID | Name | Status | Notes |
 | --- | --- | --- | --- |
 | req-qualys-connection | [Connection And Credential](#connection-and-credential) | Approved for Development | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
-| req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | Approved for Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
+| req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | In Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
 | req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | Approved for Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
 | req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
@@ -131,7 +131,7 @@ The envelope's description states the least-privilege shape: a Reader with API a
 ----
 RID: `req-qualys-transport`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 How requests leave the plugin. A small client of our own over `requests`. Every request passes through one `requests.Session` subclass whose `send` decides what may be sent.
 

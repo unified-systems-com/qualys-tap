@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- fixture-evidence: documented (Qualys Host List Detection API reference, first XML sample, copied verbatim from https://docs.qualys.com/en/vm/qweb-all-api/mergedProjects/qapi-assets/host_lists/host_detection.htm on 2026-11-20) -->
+<HOST_LIST_VM_DETECTION_OUTPUT>
+          <RESPONSE>
+          <DATETIME>2023-08-16T13:34:18Z</DATETIME>
+          <HOST_LIST>
+          <HOST>
+          <ID>524323</ID>
+          <IP>11.111.11.111</IP>
+          <TRACKING_METHOD>IP</TRACKING_METHOD>
+          <OS>
+          <![CDATA[Linux 2.4-2.6 / Embedded Device / F5 Networks Big-IP]]>
+          </OS>
+          <LAST_SCAN_DATETIME>2019-1108T09:15:14Z</LAST_SCAN_DATETIME>
+          <LAST_VM_SCANNED_DATE>2019-1108T06:37:29Z</LAST_VM_SCANNED_DATE>
+          <DETECTION_LIST>
+          <DETECTION>
+          <UNIQUE_VULN_ID>3978355</UNIQUE_VULN_ID>
+          <QID>82054</QID>
+          <TYPE>Confirmed</TYPE>
+          <SEVERITY>2</SEVERITY>
+          <SSL>0</SSL>
+          <RESULTS>
+          <![CDATA[Tested on port 2222 with an injected SYN/RST offset by 16 bytes.]]>
+          </RESULTS>
+          <STATUS>New</STATUS>
+          <FIRST_FOUND_DATETIME>2019-1108T06:37:29Z</FIRST_FOUND_DATETIME>
+          <LAST_FOUND_DATETIME>2019-1108T06:37:29Z</LAST_FOUND_DATETIME>
+          <TIMES_FOUND>1</TIMES_FOUND>
+          <LAST_TEST_DATETIME>2019-1108T06:37:29Z</LAST_TEST_DATETIME>
+          <LAST_UPDATE_DATETIME>2019-1108T09:15:14Z</LAST_UPDATE_DATETIME>
+          <IS_IGNORED>0</IS_IGNORED>
+          <IS_DISABLED>0</IS_DISABLED>
+          <LAST_PROCESSED_DATETIME>2019-1108T09:15:14Z</LAST_PROCESSED_DATETIME>
+          </DETECTION>
+          </DETECTION_LIST>
+          </HOST>
+          </HOST_LIST>
+          </RESPONSE>
+          </HOST_LIST_VM_DETECTION_OUTPUT>

@@ -141,7 +141,7 @@ How requests leave the plugin. A small client of our own over `requests`. Every 
 
 - any URL outside the configured `api_host`;
 - any redirect;
-- any override of TLS verification, client certificate or proxies;
+- any override of TLS verification, client certificate or proxies, with `trust_env` off so no proxy, CA bundle or netrc credential is taken from the environment;
 - any operation not on the allowlist.
 
 The allowlist is the plugin's one definition of "read", and a change to it is a spec change. In v0 it holds two operations, both GET:
@@ -218,7 +218,7 @@ Every response is checked against the extract before any node is written. A requ
 | req-qualys-contract-extract-1 | Generated, Not Typed | Proposed | The extract is the reducer's output from the committed DTDs; a test regenerates it and compares. | |
 | req-qualys-contract-extract-2 | No Network In The Suite | Proposed | The plugin's tests open no socket; the client and parser run against fixtures. | |
 | req-qualys-contract-extract-3 | Validate Before Write | Proposed | A page whose required elements fail the extract writes nothing; a required scope that fails is an error, an optional one is recorded as not read. | |
-| req-qualys-contract-extract-4 | Reducer Is Bounded | Proposed | The reducer refuses an external entity, an entity cycle, an oversized document and an acyclic exponential parameter-entity chain, each without any I/O of its own; tests feed each case. | Codex, PR #5. |
+| req-qualys-contract-extract-4 | Reducer Is Bounded | Proposed | The reducer refuses an external entity, an entity cycle, an oversized document and an acyclic exponential parameter-entity chain, each without any I/O of its own; tests feed each case. | |
 | req-qualys-contract-extract-5 | Malformed Knowledge Base Is A Recorded Failure | Proposed | A knowledge-base page that is not well-formed is recorded as not read for its QIDs, and the run continues. | QualysETL release notes. |
 
 ### Scheduled Drift Check
@@ -312,7 +312,7 @@ The following are each recorded as *not read* on the scan run with the reason, n
 
 A field nothing observed is `null`, an observed-empty list is `[]`, and an observed empty string stays `""`.
 
-**Resolution.** A detection's state follows Qualys's `STATUS` as returned (`New`, `Active`, `Re-Opened`, `Fixed`) and is stored exactly. It is `resolved` exactly when Qualys reports `Fixed`, with `resolution_source: qualys_fixed` and Qualys's `LAST_FIXED_DATETIME`. When a later read reports the same detection `Re-Opened` or `Active`, it reopens. A detection absent from a read never changes state, whatever the read's scope: absence in a window read means only "not processed in this window", and absence in a complete read has no meaning Qualys has documented (ruled 2026-11-20, Q7c). Nothing is deleted.
+**Resolution.** A detection's state follows Qualys's `STATUS` as returned (`New`, `Active`, `Re-Opened`, `Fixed`) and is stored exactly. It is `resolved` exactly when Qualys reports `Fixed`, with `resolution_source: qualys_fixed` and Qualys's `LAST_FIXED_DATETIME`. When a later read reports the same detection `Re-Opened` or `Active`, it reopens. A detection absent from a read never changes state, whatever the read's scope: absence in a window read means only "not processed in this window", and absence in a complete read has no meaning Qualys has documented (ruled 2026-11-20, Q7c). Nothing is deleted. So a detection stays open, and its neutral finding with it, until Qualys says Fixed: a host purged from Qualys, an ignored or disabled detection Qualys never re-tests, and a QID Qualys stops returning all stay open. That is deliberate, and the README and the neutral finding's description state it so a consumer does not read it as a collector fault.
 
 **Withdrawn hosts.** A host Qualys no longer reports in a complete read of the subscription's standing scope is marked `withdrawn`, with the run that saw it gone. A complete read has no time window and no filter beyond the standing scope, which is the least-privilege setup this spec recommends, so withdrawal works under it. Its detections keep the state they had, because a host leaving the scope or the subscription is not evidence that anything on it was fixed. A host that returns becomes `current`. A window read, a read narrower than the standing scope, a failed read and the first read after the standing scope changed withdraw nothing.
 
@@ -326,7 +326,7 @@ QID nodes carry no `state`: they are reference data, not assertions.
 | req-qualys-states-2 | Null Is Unobserved | Proposed | A field the response did not carry is `null`, never `""`, `0` or `false`. | |
 | req-qualys-states-3 | Only Fixed Resolves | Proposed | A detection is `resolved` only when Qualys reports it `Fixed`; a test drops a detection from a complete read and finds it unchanged. | Ruled 2026-11-20 (Q7c). |
 | req-qualys-states-4 | Re-Opened Reopens | Proposed | A resolved detection that Qualys reports `Re-Opened` or `Active` becomes open again, with every other field updated as returned. | |
-| req-qualys-states-5 | Withdrawn Host, Untouched Detections | Proposed | A host absent from a complete read of the standing scope becomes `withdrawn` and none of its detections change state; a window read, a narrower read and the first read after a scope change withdraw nothing; a test sets a standing asset-group scope and withdraws a host that left the group. | Ruled 2026-11-20 (Q7c). Grok, PR #5: the recommended scoped setup must still reach withdrawal. |
+| req-qualys-states-5 | Withdrawn Host, Untouched Detections | Proposed | A host absent from a complete read of the standing scope becomes `withdrawn` and none of its detections change state; a window read, a narrower read and the first read after a scope change withdraw nothing; a test sets a standing asset-group scope and withdraws a host that left the group. | Ruled 2026-11-20 (Q7c). |
 | req-qualys-states-6 | Nothing Is Deleted | Proposed | No run deletes a node the plugin wrote. | |
 
 ### The Detection Read
@@ -341,7 +341,7 @@ What one run asks Qualys for, and how a run knows where the last one stopped.
 
 Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1` and `show_qds=1`, plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
 
-The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed or stopped early does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
+The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed, stopped early, ended on a next-page URL it did not follow (`TRUNCATED`), hit a size or time ceiling, or recorded any detection page in `scopes_not_read` does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
 
 The run records:
 
@@ -356,7 +356,7 @@ The run records:
 | --- | --- | --- | --- | --- |
 | req-qualys-detection-read-1 | All Statuses Requested | Proposed | Every detection read carries all four statuses; a test fails a request without `Fixed`. | Without it, Fixed never arrives. |
 | req-qualys-detection-read-2 | Ignored And Disabled Collected | Proposed | Every detection read carries `include_ignored=1` and `include_disabled=1`, and the flags are stored on each detection. | Ruled 2026-11-20 (Q5b). |
-| req-qualys-detection-read-3 | Watermark Only From A Clean Run | Proposed | The watermark advances only after a run whose every page was read and validated; a failed run leaves it as it was. | |
+| req-qualys-detection-read-3 | Watermark Only From A Clean Run | Proposed | The watermark advances only after a run whose every page was read and validated; a failed run, a `TRUNCATED` run, a run that hit a ceiling and a run with any detection page not read each leave it as it was, and a test covers each. | |
 | req-qualys-detection-read-4 | Filter Recorded | Proposed | The run records the canonical filter, the read kind and the window bounds exactly as sent. | |
 | req-qualys-detection-read-5 | Invalid Filter Refuses | Proposed | A scope Qualys rejects ends the run before any node is written; it never falls back to an unfiltered read. | |
 
@@ -394,7 +394,7 @@ The record of which subscription was read and what each collection did.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
-| req-qualys-subscription-run-1 | One Subscription Per Envelope | Proposed | The subscription key is the JSON array of the canonical API host and the label; two labels on one host are two subscriptions, and a test shows that pairs whose concatenations match (`("a.b", "c")` and `("a", "b.c")`) give different keys. | Codex, PR #5. |
+| req-qualys-subscription-run-1 | One Subscription Per Envelope | Proposed | The subscription key is the JSON array of the canonical API host and the label; two labels on one host are two subscriptions, and a test shows that pairs whose concatenations match (`("a.b", "c")` and `("a", "b.c")`) give different keys. | |
 | req-qualys-subscription-run-2 | Run Records Its Source | Proposed | Every run records `source` as `api` or `file`, with the export manifest's time for a file. | |
 | req-qualys-subscription-run-3 | Warnings Defined Once | Proposed | Every warning code a run can record is in the table above; a test fails on an unlisted code. | |
 
@@ -481,7 +481,7 @@ The node carries, as returned:
 - `VENDOR_REFERENCE_LIST`;
 - `CVE_LIST` as a list of identifiers, each with its URL.
 
-A QID a detection names but the knowledge base did not return is recorded on the run as not read. Its detections keep their `ABOUT_QID__qualys` edge to a QID node written with its id only.
+A QID a detection names but the knowledge base did not return is recorded on the run as not read. Its detections keep their `ABOUT_QID__qualys` edge to a QID node written with its id and `kb_returned` false, so a record the knowledge base never returned is told apart from one whose fields Qualys left empty. `kb_returned` is true once a record is read, and null before any read was attempted.
 
 `ABOUT_VULNERABILITY__qualys` goes from the QID to the shared `compliance_core__compliance_vulnerability`, one edge per CVE in the list. The record is matched exactly and case-sensitively, and created when the grid holds none (`req-qualys-neutral`). No alias is resolved.
 
@@ -541,7 +541,7 @@ Two QIDs naming one CVE on one host make one neutral finding. Its status is `ope
 Edges:
 
 - `DETAILS_COMPLIANCE_FINDING__qualys`, from each detection whose QID names the CVE to the neutral finding. It stays after the detection resolves.
-- `CARRIES_COMPLIANCE_FINDING__compliance_core`, to the neutral finding from its carrier: the `computing_core` package when a parser resolved one for a detection naming the CVE (`req-qualys-package-link`), otherwise the Qualys host (ruled 2026-11-20, Q7b). The EC2 instance is reached through the host's link. Each run sends one edge-authority claim per neutral finding it writes, so a carrier that changes leaves exactly one edge.
+- `CARRIES_COMPLIANCE_FINDING__compliance_core`, to the neutral finding from its carrier: the `computing_core` package when parsers resolved exactly one package across the detections naming the CVE on that host (`req-qualys-package-link`), otherwise the Qualys host, including when they resolved several (ruled 2026-11-20, Q7b; several packages carry no single answer, so none is chosen). The EC2 instance is reached through the host's link. Each run sends one edge-authority claim per neutral finding it writes, so a carrier that changes leaves exactly one edge.
 - `CONCERNS_COMPLIANCE_VULNERABILITY__compliance_core`, from the neutral finding to the vulnerability record. The packages parser gives the required version, which is carried as `fixed_versions` when a parser is sure of it, and is otherwise absent.
 
 **The vulnerability record.** For each CVE id a QID names, the record is created with that id when the grid holds none, and nothing is invented. When the record has no CVSS score, the QID's is written: the v3 base score before the v2, with its vector and version, and `cvss_source` "Qualys knowledge base". Nothing else on a held record changes. A CVE id over the record's 128 characters gets no record, edge or neutral finding.
@@ -552,7 +552,7 @@ Edges:
 | --- | --- | --- | --- | --- |
 | req-qualys-neutral-1 | One Per Host And CVE | Proposed | Two QIDs naming one CVE on one host give one neutral finding with source `qualys` and two detail edges; a second run writes no second finding or edge; the source key is a digest of a JSON array, and a test shows triples whose concatenations match give different keys. | |
 | req-qualys-neutral-2 | Status Follows Qualys's Fixed | Proposed | The neutral finding is `open` while any detection naming the CVE on the host is open, and `resolved` once Qualys has reported every one Fixed. | |
-| req-qualys-neutral-3 | Carried By The Package Or The Host | Proposed | The carrier is the package a parser resolved, else the Qualys host; after a run with authority, a changed carrier leaves exactly one edge. | Ruled 2026-11-20 (Q7b). |
+| req-qualys-neutral-3 | Carried By The Package Or The Host | Proposed | The carrier is the one package parsers resolved for the CVE on the host, else the Qualys host, which also carries it when two or more packages were resolved; a fixture with two unambiguous package rows gives a host-carried finding; after a run with authority, a changed carrier leaves exactly one edge. | Ruled 2026-11-20 (Q7b). |
 | req-qualys-neutral-4 | An Absent Record Is Created | Proposed | A vulnerability record the grid does not hold is created with the CVE's exact id; an id over 128 characters gets none. | |
 | req-qualys-neutral-5 | Qualys's Score Fills, Never Replaces | Proposed | The QID's CVSS v3 base score, else its v2, is written to a record with no score, leaving its other fields as they were; a scored record is not written. | |
 | req-qualys-neutral-6 | No Qualys Dimension | Proposed | The neutral finding carries no `qualys.*` dimension. | |
@@ -632,18 +632,18 @@ The subscription key is the archive's API host and the `--subscription` label. A
 
 An archive is a complete read only when it was made with no asset group and the subscription's standing scope is empty. Every other archive is a narrower read and withdraws nothing. The script records an asset-group title while the standing scope holds ids, and v0 does not map one to the other, so it fails closed rather than guess. The withdrawal rules of `req-qualys-states` then apply unchanged. A file load never advances the live watermark. An archive whose read time is older than the subscription's newest recorded read is refused, with no override: an old file must not reopen what a newer read showed fixed, nor add detections a newer read no longer showed.
 
-The script is part of this requirement's surface. Its allowlist of reads is the transport's, written out in shell. It keeps TLS verification on and the password off the command line, and it drops cookies from the saved headers. A change to what it requests is a change to this spec.
+The script is part of this requirement's surface. Its allowlist of reads is the transport's, written out in shell, and it is held to a static form: exactly one `curl` invocation, in one function, with fixed options; every URL built from the parsed API host and a literal path; no `eval`, no command built from a string. It keeps TLS verification on and the password off the command line, and it drops cookies from the saved headers. A change to what it requests is a change to this spec.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
 | req-qualys-file-import-1 | Same Path As A Live Read | Proposed | A recorded set of pages loaded from an archive and the same pages read through a faked transport produce the same nodes and edges, apart from the run's source fields. | |
-| req-qualys-file-import-2 | Archive Is Untrusted | Proposed | Absolute paths, `..`, links, devices, FIFOs, an oversized member, too many members, too many expanded bytes and a compression bomb are each refused before anything is written; tests feed each. | Codex, PR #5. |
+| req-qualys-file-import-2 | Archive Is Untrusted | Proposed | Absolute paths, `..`, links, devices, FIFOs, an oversized member, too many members, too many expanded bytes and a compression bomb are each refused before anything is written; tests feed each. | |
 | req-qualys-file-import-3 | Manifest Checked | Proposed | An archive whose versions or counts disagree with the plugin or with its own members is refused, naming the mismatch. | |
-| req-qualys-file-import-4 | Older Archive Is Refused | Proposed | An archive whose read time, taken from Qualys's `RESPONSE/DATETIME` and never from the manifest, is older than the subscription's newest recorded read is refused with no override and changes nothing; a read time later than the load is refused; a test edits `created_at` to the future and finds the decision unchanged. | Review of PR #5: an override could add stale detections, and a manifest time can be forged. |
-| req-qualys-file-import-6 | Scoped Archives Withdraw Nothing | Proposed | An archive made with an asset group, or loaded into a subscription with a standing scope, is a narrower read; only an unfiltered archive into an unscoped subscription can withdraw a host. | Review of PR #5: a group title cannot be compared with scope ids. |
-| req-qualys-file-import-5 | Script Stays Read-Only | Proposed | A test reads the script and fails if it requests a path not on the transport's allowlist, sends a method other than GET, or disables TLS verification. | A source check, since the script is shell. |
+| req-qualys-file-import-4 | Older Archive Is Refused | Proposed | An archive whose read time, taken from Qualys's `RESPONSE/DATETIME` and never from the manifest, is older than the subscription's newest recorded read is refused with no override and changes nothing; a read time later than the load is refused; a test edits `created_at` to the future and finds the decision unchanged. | |
+| req-qualys-file-import-6 | Scoped Archives Withdraw Nothing | Proposed | An archive made with an asset group, or loaded into a subscription with a standing scope, is a narrower read; only an unfiltered archive into an unscoped subscription can withdraw a host. | |
+| req-qualys-file-import-5 | Script Stays Read-Only | Proposed | An execution test runs the script with a recording `curl` stub first on `PATH` and canned responses, and fails if any invocation names a host other than the configured one, a path not on the transport's allowlist, a method other than GET, `-k`/`--insecure`, `-L`/`--location`, or a credential on the command line; a source check fails on more than one `curl` call, `eval`, or a URL not built from the parsed host. | Execution-level, not only a text scan. |
 
 ### FIPS Posture
 ----

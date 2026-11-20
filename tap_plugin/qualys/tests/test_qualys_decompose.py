@@ -132,6 +132,9 @@ class TestWithdrawal:
         assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
         (run_node,) = _nodes(result, "qualys__qualys_scan_run")
         assert run_node["read_kind"] == NARROWER and run_node["warnings"][0]["code"] == "READ_KIND_DOWNGRADED"
+        from tap_plugin.qualys.decompose import document
+
+        assert document(result, run)["batches"][0]["batch_node"]["description"].startswith("One narrower read")
 
     def test_truncated_complete_read_withdraws_nothing(self) -> None:
         pages = _pages()  # the assembled page ends on a next-page link

@@ -86,6 +86,7 @@ class Result:
     dropped: list[dict[str, str]] = field(default_factory=list)
     scopes_not_read: list[dict[str, str]] = field(default_factory=list)
     partly_read_pages: int = 0
+    read_kind: str = ""  # the kind the run was treated as, after any downgrade
 
     def count(self, name: str, n: int = 1) -> None:
         self.counters[name] = self.counters.get(name, 0) + n
@@ -252,6 +253,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         "detection_api_version": "6.0",
         "knowledgebase_api_version": "4.0",
     }
+    result.read_kind = read_kind
     sub_node = envelope("sub", QualysSubscription, run.label, sub_fields)
     result.nodes.append(sub_node)
 
@@ -362,7 +364,7 @@ def document(result: Result, run: Run) -> dict[str, Any]:
             "batch_node": {
                 "source": "tap_plugin.qualys",
                 "name": f"Qualys {run.source} read",
-                "description": f"One {run.read_kind} read of Qualys subscription {run.label}, from {run.source}.",
+                "description": f"One {result.read_kind or run.read_kind} read of Qualys subscription {run.label}, from {run.source}.",
                 "description_json": {"format": "tap.qualys.run-v0", "data": {"run_id": run.run_id, "counters": result.counters}},
             },
             "nodes": result.nodes,

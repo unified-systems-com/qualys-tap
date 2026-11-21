@@ -46,6 +46,25 @@ class TestFailsOnConsumedDrift:
         changed = _dtd("detection").replace("<!ATTLIST QDS severity CDATA #REQUIRED>", "<!ATTLIST QDS severity CDATA #IMPLIED>")
         assert drift.compare("detection", changed)[0] == ["QDS"]
 
+    def test_file_mode_reads_only_a_bounded_regular_dtd(self, tmp_path: Path) -> None:
+        good = tmp_path / "output.dtd"
+        good.write_text(_dtd("detection"))
+        cases = {
+            tmp_path / "output.txt": "only a .dtd file",
+            tmp_path / "linked.dtd": "cannot be opened",
+            tmp_path / "dir.dtd": "not a regular file",
+            tmp_path / "big.dtd": "larger than",
+        }
+        (tmp_path / "output.txt").write_text(_dtd("detection"))
+        (tmp_path / "linked.dtd").symlink_to(good)
+        (tmp_path / "dir.dtd").mkdir()
+        (tmp_path / "big.dtd").write_bytes(b" " * (drift.MAX_DTD_BYTES + 1))
+        for path, reason in cases.items():
+            with pytest.raises(drift.DriftError, match=reason):
+                drift.read_dtd_file(path)
+        assert drift.main(["file", "detection", str(tmp_path / "linked.dtd")]) == 2
+        assert drift.check_file("detection", good) == 0
+
     def test_a_dtd_that_cannot_be_reduced_fails(self) -> None:
         consumed, _ = drift.compare("detection", '<!ENTITY % x SYSTEM "http://example.invalid/x">%x;')
         assert len(consumed) == 1 and consumed[0].startswith("the DTD cannot be reduced")
@@ -153,4 +172,4 @@ def test_standard_library_only() -> None:
     tree = ast.parse(Path(drift.__file__).read_text())
     roots = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     roots |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
-    assert roots <= {"argparse", "hashlib", "json", "os", "urllib", "pathlib", "typing", "tap_plugin"}
+    assert roots <= {"argparse", "hashlib", "json", "os", "stat", "urllib", "pathlib", "typing", "tap_plugin"}

@@ -11,9 +11,10 @@ observation ledger (``dtd-unauthenticated``):
 - ``reference`` fetches Qualys's published DTD reference and compares its SHA-256 with the one the committed
   DTDs were extracted from (``tests/vendor/provenance.json``). A different hash fails the run: the reference
   changed, and the DTDs must be extracted again and compared, which ``file`` then does offline.
-- ``served --host`` fetches the two DTDs from a platform host, with no credential, and compares them. The
-  workflow runs it only once a recording has settled ``dtd-unauthenticated``.
-- ``file <document> <path>`` compares a DTD on disk.
+- ``served --host`` fetches the two DTDs from a platform host, with no credential, and compares them. Qualys
+  served both without one on 2026-11-21, so this is the source the workflow runs.
+- ``file <document> <path>`` compares a DTD on disk: a regular ``.dtd`` file, not a link, within the size
+  bound every DTD read has.
 
 Standard library only, so the workflow needs no install step. No credential is read or sent, nothing is
 written but the run summary, and no redirect is followed.
@@ -23,6 +24,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -142,8 +144,26 @@ def check_served(host: str, fetcher: Any = None) -> int:
     return 1 if failed else 0
 
 
+def read_dtd_file(path: Path) -> str:
+    """A DTD named on the command line: a regular ``.dtd`` file, not a link, no larger than any DTD read."""
+    if path.suffix != ".dtd":
+        raise DriftError(f"{path.name}: only a .dtd file is compared")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise DriftError(f"{path.name}: cannot be opened ({exc.strerror})") from exc
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise DriftError(f"{path.name}: not a regular file")
+    with os.fdopen(fd, "rb") as handle:
+        data = handle.read(MAX_DTD_BYTES + 1)
+    if len(data) > MAX_DTD_BYTES:
+        raise DriftError(f"{path.name}: larger than {MAX_DTD_BYTES} bytes")
+    return data.decode("utf-8", errors="replace")
+
+
 def check_file(document: str, path: Path) -> int:
-    consumed, other = compare(document, path.read_text(encoding="utf-8"))
+    consumed, other = compare(document, read_dtd_file(path))
     _summary(["## DTD on disk", *_report(document, consumed, other)])
     return 1 if consumed else 0
 

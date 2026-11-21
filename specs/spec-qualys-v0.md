@@ -110,7 +110,7 @@ The secret is a plugin secret: its consumer is the Qualys collector, so the enve
 
 - `api_host`: the platform's API root, such as `https://qualysapi.qg2.apps.qualys.com`, from Qualys's platform identification page. `https://` only. Required. Host and scheme are lower-cased. A URL with userinfo, a path, a query or a fragment is refused before any request.
 - `subscription`: an operator-chosen label naming the subscription, such as `acme-prod`. Required. Qualys is a shared service, so many subscriptions answer on one API host, and the host alone cannot identify one. Whether Qualys reports a subscription identifier the plugin could read instead is open in the observation ledger (`subscription-identity`).
-- `username`, `password`: a Qualys user with the Reader role and the API Access permission, without UI access where the subscription allows. Required.
+- `username`, `password`: a Qualys user with the Reader role and the API Access permission, without UI access where the subscription allows. Required. A username containing `:` is refused, because HTTP Basic separates the user from the password with one.
 - `ca_bundle`: the absolute path of a PEM file on the host, never its contents. Optional.
 - `scope`: optional server-side filters, an object with at most one of `asset_group_ids` (a list of integers) or `tag_ids` (a list of integers), sent as Qualys's `ag_ids`, or as `use_tags=1&tag_set_by=id&tag_include_selector=any&tag_set_include=<ids>` (a host matching any one of the tags; the standing scope has no other selector). The scope is the subscription's **standing scope**: it is recorded on the subscription node and on every run, and a read made with it is a complete read of that scope (`req-qualys-detection-read`, `req-qualys-states`).
 
@@ -346,14 +346,16 @@ What one run asks Qualys for, and how a run knows where the last one stopped.
 
 Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1` and `show_qds=1`, plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
 
-The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed, stopped early, ended on a next-page URL it did not follow (`TRUNCATED`), hit a size or time ceiling, recorded any detection page in `scopes_not_read`, or read any page only partly (an unkeyable detection, `req-qualys-detection-5`) does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
+The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed, stopped early, ended on a next-page URL it did not follow (`TRUNCATED`), holds pages that are not one unbroken next-page chain (`TRUNCATED`: a page other than the last with no link, or a following page whose first host is below the link's `id_min` or not above the linking page's last host; `unified-systems-com/qualys-tap#19`), hit a size or time ceiling, recorded any detection page in `scopes_not_read`, or read any page only partly (an unkeyable detection, `req-qualys-detection-5`) does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
 
 The run records:
 
 - the canonical filter it applied;
 - whether it was complete or a window, and the window bounds;
 - the page count;
-- whether the last page ended on a next-page URL that was not followed.
+- whether the last page ended on a next-page URL that was not followed, and, when the pages are not one chain, where it broke.
+
+The chain check cannot see a page dropped cleanly from the middle whose successor still starts above the link's `id_min`, because host ids are sparse and Qualys does not say where the next page starts. A live read builds its own chain, so this limit matters only for an archive, whose page list the operator vouches for (`req-qualys-file-import`).
 
 #### Acceptance Criteria
 

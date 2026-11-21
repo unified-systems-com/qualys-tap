@@ -122,3 +122,38 @@ class TestBounded:
     def test_wrapped_comment_terminator_tolerated(self) -> None:
         # The PDF reference wraps one comment terminator across a line.
         assert "A" in parse_dtd("<!-- note -\n-> <!ELEMENT A (#PCDATA)>")
+
+
+@pytest.mark.spec("req-qualys-contract-extract-1")
+class TestAttlistForms:
+    """Enumerated types, quoted and fixed defaults, and an ATTLIST before its ELEMENT (qualys-tap#18)."""
+
+    def test_enumerated_type_and_defaults(self) -> None:
+        dtd = """<!ELEMENT A (#PCDATA)>
+        <!ATTLIST A mode ( x | y ) #REQUIRED
+                    kind (one|two) "one"
+                    version CDATA #FIXED "2.0"
+                    note CDATA #IMPLIED
+                    fmt NOTATION (gif | png) #IMPLIED>"""
+        attrs = parse_dtd(dtd)["A"]["attributes"]
+        assert attrs == {
+            "mode": {"type": "(x|y)", "default": "#REQUIRED"},
+            "kind": {"type": "(one|two)", "default": '"one"'},
+            "version": {"type": "CDATA", "default": '#FIXED "2.0"'},
+            "note": {"type": "CDATA", "default": "#IMPLIED"},
+            "fmt": {"type": "NOTATION(gif|png)", "default": "#IMPLIED"},
+        }
+
+    def test_attlist_before_its_element(self) -> None:
+        elements = parse_dtd("<!ATTLIST A id CDATA #REQUIRED><!ELEMENT A (B, C?)><!ELEMENT B (#PCDATA)><!ELEMENT C (#PCDATA)>")
+        assert elements["A"]["content"] == "(B,C?)"
+        assert elements["A"]["required_children"] == ["B"]
+        assert elements["A"]["attributes"] == {"id": {"type": "CDATA", "default": "#REQUIRED"}}
+
+    @pytest.mark.parametrize(
+        "body",
+        ["A mode (x|y)", "A version CDATA #FIXED", "A mode (x|y) sometimes", "A fmt NOTATION #IMPLIED", "A mode (x|y #REQUIRED"],
+    )
+    def test_malformed_refused(self, body: str) -> None:
+        with pytest.raises(ReduceError):
+            parse_dtd(f"<!ELEMENT A (#PCDATA)><!ATTLIST {body}>")

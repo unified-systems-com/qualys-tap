@@ -108,6 +108,12 @@ class TestRefused:
         assert usable == [] and error.qualified == "qualys:acme" and "not a readable secret envelope" in error.reason
         assert PASSWORD not in str(error)
 
+    def test_username_with_a_colon_refused(self, tmp_path: Path) -> None:
+        # HTTP Basic joins user and password with ':', so the server would split this user name (qualys-tap#29).
+        _write(tmp_path, "acme", _data(username="acme:ro"))
+        usable, (error,) = cred.discover(tmp_path)
+        assert usable == [] and "at username (pattern)" in error.reason and "acme:ro" not in str(error)
+
     def test_non_latin1_password_refused(self, tmp_path: Path) -> None:
         _write(tmp_path, "acme", _data(password="pāss"))
         _, (error,) = cred.discover(tmp_path)

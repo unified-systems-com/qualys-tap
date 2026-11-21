@@ -27,10 +27,14 @@ MAX_TOTAL_BYTES = 1 << 30
 MAX_RATIO = 100
 DETECTION_API = "6.0"
 KNOWLEDGEBASE_API = "4.0"
-SCRIPT_VERSION = 2
+SCRIPT_VERSION = 3
+#: Versions the loader reads. Version 3 asks again, by id, for the QIDs a cut-short knowledge-base response did
+#: not return, saving each further page as kb-<chunk>-NN.xml (unified-systems-com/qualys-tap#16); version 2
+#: wrote one page per chunk and followed nothing.
+SCRIPT_VERSIONS = (2, 3)
 
 _DETECTION_PAGE = re.compile(r"hld-(\d{4})\.xml")
-_KB_FILE = re.compile(r"kb-[a-z]{2,}\.xml")
+_KB_FILE = re.compile(r"kb-([a-z]{2,})(?:-(\d{2}))?\.xml")
 _SCOPE_KINDS = {"asset_group_ids", "asset_group_titles", "tag_ids", "tag_names"}
 
 
@@ -46,6 +50,9 @@ class Archive:
     manifest: dict[str, Any]
     detection_pages: list[bytes] = field(default_factory=list)
     knowledgebase_files: list[bytes] = field(default_factory=list)
+    #: Parallel to ``knowledgebase_files``: whether each is the last page of its chunk, the only page whose
+    #: next-page link means a QID went unobserved.
+    knowledgebase_ends: list[bool] = field(default_factory=list)
     qids_asked: set[str] = field(default_factory=set)
     dtds: dict[str, str] = field(default_factory=dict)
 
@@ -92,8 +99,8 @@ def _manifest(raw: bytes) -> dict[str, Any]:
         raise ArchiveRefused("export.json is not JSON") from exc
     if not isinstance(manifest, dict):
         raise ArchiveRefused("export.json is not an object")
-    if manifest.get("script_version") != SCRIPT_VERSION:
-        raise ArchiveRefused(f"export.json script_version is not {SCRIPT_VERSION}")
+    if manifest.get("script_version") not in SCRIPT_VERSIONS:
+        raise ArchiveRefused(f"export.json script_version is not one of {', '.join(map(str, SCRIPT_VERSIONS))}")
     if manifest.get("detection_api") != DETECTION_API or manifest.get("knowledgebase_api") != KNOWLEDGEBASE_API:
         raise ArchiveRefused(f"the archive was not made with detection API {DETECTION_API} and knowledge base API {KNOWLEDGEBASE_API}")
     if not isinstance(manifest.get("api_host"), str):
@@ -150,7 +157,20 @@ def open_archive(data: bytes) -> Archive:
         raise ArchiveRefused("the archive has no export.json")
     manifest = _manifest(files["export.json"])
     pages = sorted((int(m.group(1)), name) for name in files if (m := _DETECTION_PAGE.fullmatch(name)))
-    kb = sorted(name for name in files if _KB_FILE.fullmatch(name))
+    chunks: dict[str, list[tuple[int, str]]] = {}
+    for name in files:
+        if m := _KB_FILE.fullmatch(name):
+            chunks.setdefault(m.group(1), []).append((int(m.group(2) or 1), name))
+    kb: list[str] = []
+    ends: list[bool] = []
+    for chunk in sorted(chunks):
+        numbered = sorted(chunks[chunk])
+        if [n for n, _ in numbered] != list(range(1, len(numbered) + 1)):
+            raise ArchiveRefused("knowledge-base pages of a chunk are not numbered 1..n")
+        if len(numbered) > 1 and manifest["script_version"] < 3:
+            raise ArchiveRefused("a version 2 archive holds a knowledge-base continuation page")
+        kb.extend(name for _, name in numbered)
+        ends.extend(i == len(numbered) - 1 for i in range(len(numbered)))
     if [n for n, _ in pages] != list(range(1, len(pages) + 1)):
         raise ArchiveRefused("detection pages are not numbered 1..n")
     if len(pages) != manifest["detection_pages"] or len(kb) != manifest["knowledgebase_files"]:
@@ -174,6 +194,7 @@ def open_archive(data: bytes) -> Archive:
         manifest=manifest,
         detection_pages=[files[name] for _, name in pages],
         knowledgebase_files=[files[name] for name in kb],
+        knowledgebase_ends=ends,
         qids_asked=qids,
         dtds=dtds,
     )

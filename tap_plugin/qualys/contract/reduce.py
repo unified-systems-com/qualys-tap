@@ -171,18 +171,72 @@ def parse_dtd(text: str) -> dict[str, dict[str, Any]]:
             name, model = m.groups()
             model = model.replace(" ", "")
             prior = elements.get(name)
-            if prior and prior["content"] != model:
+            if prior and prior["content"] is not None and prior["content"] != model:
                 raise ReduceError(f"element {name} declared twice with different content")
-            elements.setdefault(name, {"content": model, "required_children": required_children(model), "single_children": single_children(model), "attributes": {}})
+            # An ATTLIST may come first and create the entry; the ELEMENT then fills it in (qualys-tap#18).
+            entry = elements.setdefault(name, {"content": None, "required_children": [], "single_children": [], "attributes": {}})
+            entry.update(content=model, required_children=required_children(model), single_children=single_children(model))
         elif kind == "ATTLIST":
-            parts = body.split()
-            if not parts:
+            tokens = _attlist_tokens(body)
+            if not tokens:
                 continue
-            name, rest = parts[0], parts[1:]
+            name, rest = tokens[0], tokens[1:]
             target = elements.setdefault(name, {"content": None, "required_children": [], "single_children": [], "attributes": {}})
-            for i in range(0, len(rest) - 2, 3):
-                target["attributes"][rest[i]] = {"type": rest[i + 1], "default": rest[i + 2]}
+            target["attributes"].update(_attribute_defs(name, rest))
     return elements
+
+
+_ATTLIST_TOKEN = re.compile(r"\([^()]*\)|\"[^\"]*\"|'[^']*'|[^\s()\"']+")
+
+
+def _attlist_tokens(body: str) -> list[str]:
+    """An ATTLIST body as tokens: a parenthesised enumeration and a quoted default are each one token."""
+    tokens, at = [], 0
+    for m in _ATTLIST_TOKEN.finditer(body):
+        if body[at : m.start()].strip():
+            raise ReduceError(f"malformed ATTLIST declaration: {body[:60]}")
+        token = m.group(0)
+        tokens.append("".join(token.split()) if token.startswith("(") else token)
+        at = m.end()
+    if body[at:].strip():
+        raise ReduceError(f"malformed ATTLIST declaration: {body[:60]}")
+    return tokens
+
+
+def _attribute_defs(element: str, rest: list[str]) -> dict[str, dict[str, str]]:
+    """Each attribute's type and default (unified-systems-com/qualys-tap#18).
+
+    A type is a keyword (``CDATA``, ``ID``…), an enumeration ``(a|b)``, or ``NOTATION`` and its enumeration.
+    A default is ``#REQUIRED``, ``#IMPLIED``, ``#FIXED`` and a literal, or a literal alone; a literal is kept
+    with its quotes, so ``#FIXED "x"`` stays distinguishable from ``"x"``.
+    """
+    out: dict[str, dict[str, str]] = {}
+    i = 0
+    while i < len(rest):
+        attr = rest[i]
+        i += 1
+        if i >= len(rest):
+            raise ReduceError(f"incomplete ATTLIST entry on {element}")
+        kind = rest[i]
+        i += 1
+        if kind == "NOTATION":
+            if i >= len(rest) or not rest[i].startswith("("):
+                raise ReduceError(f"NOTATION without an enumeration on {element}")
+            kind = f"NOTATION{rest[i]}"
+            i += 1
+        if i >= len(rest):
+            raise ReduceError(f"incomplete ATTLIST entry on {element}")
+        default = rest[i]
+        i += 1
+        if default == "#FIXED":
+            if i >= len(rest) or rest[i][:1] not in "\"'":
+                raise ReduceError(f"#FIXED without a value on {element}")
+            default = f"#FIXED {rest[i]}"
+            i += 1
+        elif default not in ("#REQUIRED", "#IMPLIED") and default[:1] not in "\"'":
+            raise ReduceError(f"ATTLIST default on {element} is neither a keyword nor a literal")
+        out[attr] = {"type": kind, "default": default}
+    return out
 
 
 def reduce(dtd_text: str, consumed: list[str], named_not_declared: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:

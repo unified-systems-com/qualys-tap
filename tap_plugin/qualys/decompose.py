@@ -313,6 +313,9 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
         for d in dets:
             if d.ref is None:
                 continue
+            for o in d.package_observations or []:
+                if o.get("mapping_unambiguous") is True and neutral.package_key(o) is None:
+                    result.count("package_keys_too_long")
             for package in {k for o in d.package_observations or [] if (k := neutral.package_key(o))}:
                 wanted.add(package)
                 result.edges.append(edge_to_key(f"e-pkg-{d.ref}-{len(result.edges)}", neutral.FOUND_IN_PACKAGE, d.ref, neutral.PACKAGE_TYPE, neutral.package_ref(package)["key"]))

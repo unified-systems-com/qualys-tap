@@ -77,14 +77,27 @@ def cvss_of(vuln: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _package_limits() -> tuple[int | None, ...]:
+    """The column widths of computing_core's package key, read from the installed model, not copied here."""
+    from django.apps import apps
+
+    model = apps.get_model("computing_core", "Package")
+    return tuple(model._meta.get_field(name).max_length for name in ("ecosystem", "name", "version"))
+
+
+def package_fits(parts: tuple[str, str, str]) -> bool:
+    """Whether a key's parts fit the package columns; one that does not is never sent, so it cannot fail a batch."""
+    return all(limit is None or len(part) <= limit for part, limit in zip(parts, _package_limits(), strict=True))
+
+
 def package_key(observation: dict[str, Any]) -> tuple[str, str, str] | None:
-    """The computing_core package an observation names, only where the parser was sure (req-qualys-package-link-1)."""
+    """The computing_core package an observation names, only where the parser was sure and the key fits (-1)."""
     if observation.get("mapping_unambiguous") is not True:
         return None
     parts = (observation.get("ecosystem"), observation.get("name"), observation.get("installed_version"))
     if not all(isinstance(p, str) and p for p in parts):
         return None
-    return parts  # type: ignore[return-value]
+    return parts if package_fits(parts) else None  # type: ignore[return-value]
 
 
 def package_ref(key: tuple[str, str, str]) -> dict[str, Any]:
@@ -123,8 +136,8 @@ class Group:
     def packages(self) -> dict[tuple[str, str, str], str | None]:
         """The packages parsers were sure of across the group, each with the required version its rows gave.
 
-        A row with no required version never hides one another row gave; where rows disagree, the lowest version
-        string is kept, so the result does not depend on the order detections were read in.
+        A row with no required version never hides one another row gave. Where rows disagree there is no single
+        answer, so none is given: no version is chosen by string order, which would put ``10.0`` before ``9.0``.
         """
         versions: dict[tuple[str, str, str], set[str]] = {}
         for detection in self.detections:
@@ -133,7 +146,7 @@ class Group:
                 if key is not None:
                     required = observation.get("required_version")
                     versions.setdefault(key, set()).update([required] if isinstance(required, str) and required else [])
-        return {key: (min(found) if found else None) for key, found in versions.items()}
+        return {key: (next(iter(found)) if len(found) == 1 else None) for key, found in versions.items()}
 
     def carrier(self) -> tuple[str, str, str] | None:
         """The one package carrying the finding; None means the host carries it (ruled Q7b, req-qualys-neutral-3).

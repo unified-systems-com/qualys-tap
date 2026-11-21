@@ -192,10 +192,27 @@ class TestReviewRound1:
     def test_a_row_without_a_required_version_never_hides_one(self) -> None:
         assert self._group((None,), ("7.88.1-11",)).packages() == {("deb", "curl", "7.88.1-10"): "7.88.1-11"}
 
-    def test_disagreeing_required_versions_do_not_depend_on_order(self) -> None:
-        one = self._group(("7.88.1-12",), ("7.88.1-11",)).packages()
-        two = self._group(("7.88.1-11",), ("7.88.1-12",)).packages()
-        assert one == two == {("deb", "curl", "7.88.1-10"): "7.88.1-11"}
+    def test_disagreeing_required_versions_give_none(self) -> None:
+        # 10.0 sorts before 9.0 as a string; disagreement gives no version at all, in either order.
+        one = self._group(("9.0",), ("10.0",)).packages()
+        two = self._group(("10.0",), ("9.0",)).packages()
+        assert one == two == {("deb", "curl", "7.88.1-10"): None}
+
+    def test_disagreeing_versions_put_no_fixed_versions_on_the_edge(self) -> None:
+        two_rows = "webkit2gtk\t2.44.2-1~deb12u1\t2.44.3-1~deb12u1\nwebkit2gtk\t2.44.2-1~deb12u1\t2.44.4-1~deb12u1"
+        result = decompose(_run(), _pages(**{"webkit2gtk\t2.44.2-1~deb12u1\t2.44.3-1~deb12u1": two_rows}), _kb(_vuln("6666666", "CVE-1")), FakeGrid())
+        (carries,) = _edges(result, neutral.CARRIES)
+        assert carries["from_key"] == neutral.package_ref(WEBKIT)  # still one package, so it still carries
+        (concerns,) = _edges(result, neutral.CONCERNS)
+        assert concerns["properties"] == {}
+
+    def test_an_over_long_package_key_is_never_sent(self) -> None:
+        long_name = "p" * 600
+        result = decompose(_run(), _pages(**{"webkit2gtk\t2.44.2": f"{long_name}\t2.44.2"}), _kb(_vuln("6666666", "CVE-1")), FakeGrid())
+        assert _of(result, neutral.PACKAGE_TYPE) == [] and _edges(result, neutral.FOUND_IN_PACKAGE) == []
+        assert result.counters["package_keys_too_long"] == 1
+        (carries,) = _edges(result, neutral.CARRIES)
+        assert carries["from_ref"] == "h1001"  # no package it could name, so the host carries
 
     def test_an_unrelated_held_cve_is_not_touched(self) -> None:
         grid = FakeGrid()

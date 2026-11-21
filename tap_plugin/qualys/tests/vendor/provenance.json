@@ -1,18 +1,19 @@
 {
-  "description": "Where each committed DTD source came from. Each was copied from Qualys's published XML/DTD reference by a script that only drops the PDF's page headers and page numbers; nothing is typed. These are the DTDs the reference shows for the /api/2.0 paths; the 6.0 and 4.0 outputs are expected to be supersets, and the drift check compares them when a served DTD is in hand (req-qualys-drift-ci-4).",
+  "description": "Where each committed DTD source came from. Both are the DTDs Qualys serves, without a credential, at the documented paths on the US1 platform host, saved byte for byte; nothing is typed. They replace copies taken from the XML/DTD reference PDF's /api/2.0 pages, which the served 6.0 and 4.0 outputs turned out to extend. The scheduled drift check fetches them again and compares (req-qualys-drift-ci). The reference PDF's hash is kept for the drift command's reference mode, for a platform that does not serve its DTDs.",
   "source": "https://cdn2.qualys.com/docs/qualys-api-vmpc-dtd-reference.pdf",
   "source_version": "Qualys API (VM, PC) XML/DTD Reference v10.25.1",
-  "fetched": "2026-11-20",
+  "source_sha256": "dd244fb649e861a8d7e58a42d36761149ab04a0b0fb060577970df0ebee76e4e",
+  "fetched": "2026-11-21",
   "files": {
     "hld-output.dtd": {
-      "description": "Host List VM Detection Output DTD (output.dtd)",
-      "sha256": "bc29fe24ae0c729b7b5f061440cca2b19be29feeaf86974becc5828641ac97a5",
-      "elements": 88
+      "description": "Host List VM Detection Output DTD, API 6.0",
+      "url": "https://qualysapi.qualys.com/api/6.0/fo/asset/host/vm/detection/dtd/output.dtd",
+      "sha256": "428f0320a3a5bf3c718858c923833f7ef25040fd7bf8dda0be397ffcc4193d59"
     },
     "kb-output.dtd": {
-      "description": "KnowledgeBase VULN List Output DTD (knowledge_base_vuln_list_output.dtd)",
-      "sha256": "dcfc5baa5e8076f9314a4b0a68da2361edd03c046f6ee59f76fabf2e3d753edc",
-      "elements": 109
+      "description": "KnowledgeBase VULN List Output DTD, API 4.0",
+      "url": "https://qualysapi.qualys.com/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd",
+      "sha256": "6163d7cf6148e5451a951e5ec13116d23c4dc4633fff6ba3af9eb821fd5796ee"
     }
   }
 }

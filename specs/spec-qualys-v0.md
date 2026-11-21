@@ -45,7 +45,7 @@ Eight consequences shape v0:
 - QualysETL's release notes report knowledge-base XML that is sometimes not well-formed. That is why a malformed page is a recorded failure, not a crash.
 - `anchore-tap` and `tenable-tap` (this organisation) supplied the structure this plugin inherits: three states, keys by assertion, operator settings never read from nodes, the observation command, the neutral finding and the parser registry.
 
-**Provenance markers.** *Documented* (read from the Qualys pages and PDFs above and from each integration's source, 2026-11-20): every endpoint, parameter, field and limit named below. *Designed* (this document): every node, edge, key, rule and verdict. *Observed*: nothing. No Qualys subscription has been called and no export archive has been received. Every field mapping, parser and "Qualys returns X" claim is provisional until a recorded response or an export archive replaces it, and no requirement below reaches `Implemented` on a documented claim alone.
+**Provenance markers.** *Documented* (read from the Qualys pages and PDFs above and from each integration's source, 2026-11-20): every endpoint, parameter, field and limit named below. *Designed* (this document): every node, edge, key, rule and verdict. *Observed*: only the two output DTDs, which Qualys serves without a credential (fetched from `qualysapi.qualys.com` on 2026-11-21 and committed as the contract's sources). No Qualys subscription has been called and no export archive has been received. Every field mapping, parser and "Qualys returns X" claim is provisional until a recorded response or an export archive replaces it, and no requirement below reaches `Implemented` on a documented claim alone.
 
 ## Goals
 
@@ -69,7 +69,7 @@ Eight consequences shape v0:
 | req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | In Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
 | req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | In Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
-| req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
+| req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | In Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
 | req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
 | req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | In Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
 | req-qualys-detection-read | [The Detection Read](#the-detection-read) | In Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
@@ -207,9 +207,9 @@ A committed extract of the part of Qualys's output DTDs this plugin reads, produ
 
 #### Implementation
 
-`tap_plugin/qualys/contract/extract.json`, with a JSON Schema and a `description` on the top level and every entry. `tap_plugin/qualys/contract/reduce.py` produces it from a DTD and the element paths named in `contract/consumed.json`: each consumed element, its content model, its attributes and whether each is required. The committed sources are the host detection 6.0 output DTD and the knowledge base 4.0 output DTD, under `tests/vendor/`, with `provenance.json` recording where each came from, the fetch date and its hash. The first copies come from the DTDs an export archive carries or, failing that, from Qualys's DTD reference ([DTD](https://cdn2.qualys.com/docs/qualys-api-vmpc-dtd-reference.pdf)), marked as such. `contract/build.py` regenerates the extract, and `--check` tests it.
+`tap_plugin/qualys/contract/extract.json`, with a JSON Schema and a `description` on the top level and every entry. `tap_plugin/qualys/contract/reduce.py` produces it from a DTD and the element paths named in `contract/consumed.json`: each consumed element, its content model, its attributes and whether each is required. The committed sources are the host detection 6.0 output DTD and the knowledge base 4.0 output DTD, under `tests/vendor/`, with `provenance.json` recording where each came from, the fetch date and its hash. They are the DTDs Qualys serves at the documented paths, fetched without a credential from the US1 platform host and saved byte for byte. The first copies came from Qualys's DTD reference ([DTD](https://cdn2.qualys.com/docs/qualys-api-vmpc-dtd-reference.pdf)), which shows the `/api/2.0` outputs. The served 6.0 and 4.0 DTDs extend those with optional children only, and replaced them on 2026-11-21. `contract/build.py` regenerates the extract, and `--check` tests it.
 
-Every response is checked against the extract before any node is written. A required element that is missing or malformed fails that page. An element the extract does not name is tolerated and not stored. A required child is checked only when the plugin reads it, so an unread element the DTD requires (the knowledge base's `DISCOVERY`) cannot fail a page. Where Qualys's published DTD names an element in a content model but never declares it (`ASSET_ID` in `HOST`), `consumed.json` lists it under `named_not_declared` with the reason; the reducer checks the name really is named and really is undeclared, and records it with no content model. `CLOUD_PROVIDER_TAGS` is named and undeclared too, with no documented shape, so it is not read until a recording shows one (ledger `cloud-provider-tags-shape`). The reducer takes a DTD as data and never resolves an external entity or fetches anything. It refuses a document over a fixed size, treats a parameter-entity cycle as an error, and bounds expansion: at most 1,000 parameter-entity references expanded and at most 1 MiB of expanded text per document, so an acyclic chain cannot grow exponentially.
+Every response is checked against the extract before any node is written. A required element that is missing or malformed fails that page. An element the extract does not name is tolerated and not stored. A required child is checked only when the plugin reads it, so an unread element the DTD requires (the knowledge base's `DISCOVERY`) cannot fail a page. Where a DTD names an element in a content model but never declares it, `consumed.json` lists it under `named_not_declared` with the reason; the reducer checks the name really is named and really is undeclared, and records it with no content model. The reference PDF left `ASSET_ID` undeclared; the served DTD declares it, so no element is listed today. The served DTD declares `CLOUD_PROVIDER_TAGS` as `(CLOUD_TAG+)`, but it is not read until a recording shows its content (ledger `cloud-provider-tags-shape`). The reducer takes a DTD as data and never resolves an external entity or fetches anything. It refuses a document over a fixed size, treats a parameter-entity cycle as an error, and bounds expansion: at most 1,000 parameter-entity references expanded and at most 1 MiB of expanded text per document, so an acyclic chain cannot grow exponentially.
 
 #### Acceptance Criteria
 
@@ -225,16 +225,20 @@ Every response is checked against the extract before any node is written. A requ
 ----
 RID: `req-qualys-drift-ci`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 A scheduled workflow compares the DTDs Qualys serves with the committed sources, reduces both with the same reducer, and fails when what the plugin reads has changed.
 
 #### Implementation
 
-`.github/workflows/qualys-drift.yml`, scheduled, with `contents: read` and no write token: the failing run is the signal, and no issue is opened. It compares only consumed elements, and lists other changes in the run summary without failing. Whether Qualys serves its API DTDs without a credential is open in the observation ledger (`dtd-unauthenticated`).
+`.github/workflows/qualys-drift.yml`, scheduled weekly and on demand, with `contents: read` and no write token: the failing run is the signal, and no issue is opened. It runs `python -m tap_plugin.qualys.contract.drift`, which uses only the standard library, so the workflow installs nothing. It fails on a changed consumed element and lists other changes in the run summary without failing.
 
-- If it does, the workflow fetches them from the documented DTD paths on a public platform host.
-- If it does not, the workflow compares the DTD reference PDF's published version and hash, and the DTDs carried by each export archive and each live run are compared by the same reducer at load time (`req-qualys-file-import`, `req-qualys-probe`).
+Qualys serves its API DTDs without a credential: fetched from `qualysapi.qualys.com` on 2026-11-21. So the workflow fetches both from the documented DTD paths on that host (`drift served`), with no redirect followed and a size bound. Other platforms are not checked; the ledger entry `dtd-unauthenticated` stays open for them, and the observation command reports it per subscription. Two other modes stay available by hand:
+
+- `drift reference` compares the reference PDF's hash with the one recorded in `provenance.json`, for a platform that does not serve its DTDs;
+- `drift file <document> < <path>` compares a DTD on disk, read from standard input; the command takes no path.
+
+The DTDs carried by each export archive are compared at load time through the same function (`req-qualys-file-import`).
 
 No credential is ever placed in CI.
 

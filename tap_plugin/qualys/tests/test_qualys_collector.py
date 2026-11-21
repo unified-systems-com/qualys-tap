@@ -316,6 +316,16 @@ class TestKnowledgeBase:
         # The cut page returned 6666666; the second request re-asks every other QID by id, not by Qualys's link.
         assert len(asked) == 2 and asked[1]["ids"] == ["11827,38170,45038,82054"] and "details" in asked[1]
 
+    def test_a_cut_page_that_moves_nothing_forward_is_incomplete(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_plugin.qualys.models import QualysQid
+
+        empty = (f"<KNOWLEDGE_BASE_VULN_LIST_OUTPUT><RESPONSE><DATETIME>2026-11-20T18:00:00Z</DATETIME><WARNING><CODE>1980</CODE><TEXT>more</TEXT>"
+                 f"<URL><![CDATA[{HOST}{KNOWLEDGEBASE_PATH}?action=list&ids=1]]></URL></WARNING></RESPONSE></KNOWLEDGE_BASE_VULN_LIST_OUTPUT>").encode()
+        asked: list[Any] = []
+        _collector(monkeypatch, Router(kb=lambda q: (asked.append(q), (200, empty, {}))[1])).run()
+        assert len(asked) == 1  # not asked again for the same page
+        assert set(QualysQid.objects.filter(subscription_key=KEY).values_list("kb_returned", flat=True)) == {None}
+
     def test_a_failed_chunk_leaves_its_qids_unobserved_not_absent(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
         from tap_plugin.qualys.models import QualysQid
 

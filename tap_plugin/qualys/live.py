@@ -33,7 +33,8 @@ TRUNCATION_LIMIT = 1000
 #: QIDs asked of the knowledge base per request: short enough that the URL stays well inside any limit.
 KB_CHUNK = 300
 #: Ceilings: per request (the transport's own timeouts bound inactivity, not the whole attempt), per run, and
-#: pages per walk. A walk stopped by one is recorded incomplete, never as a short subscription.
+#: pages per walk. A walk stopped by one is recorded incomplete, never as a short subscription. The run ceiling
+#: is checked before each request starts, so a run ends within RUN_CEILING_SECONDS + READ_CEILING_SECONDS.
 READ_CEILING_SECONDS = 900.0
 RUN_CEILING_SECONDS = 4 * 3600.0
 MAX_DETECTION_PAGES = 5000
@@ -232,8 +233,12 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             result.kb_pages.append(kb_page)
             returned = {v.get("qid") for v in kb_page.vulns}
             left = [q for q in remaining if q not in returned]
-            if kb_page.next_url is None or not returned or len(left) == len(remaining):
-                # Whole, or a cut that returned nothing new: what is left was asked and not returned.
+            if kb_page.next_url is None:
+                break  # whole: what is left was asked and not returned
+            if not returned or len(left) == len(remaining):
+                # Qualys says there is more, but this page moved nothing forward: what is left is unobserved,
+                # never "not returned", and asking again would only repeat the same page.
+                result.knowledgebase_complete = False
                 break
             remaining = left
         else:

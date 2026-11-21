@@ -30,6 +30,7 @@ from tap_plugin.qualys.models.host import QualysHost
 from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
+from tap_plugin.qualys import parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
 
 COMPLETE = "complete"
@@ -168,7 +169,7 @@ def _host_node(ref: str, key: str, record: dict[str, Any], result: Result) -> di
     return envelope(ref, QualysHost, fields.get("dns") or fields.get("ip") or f"host {record['host_id']}", fields)
 
 
-def _detection_node(ref: str, key: str, host_id: str, record: dict[str, Any], result: Result) -> dict[str, Any]:
+def _detection_node(ref: str, key: str, host_id: str, os_name: Any, record: dict[str, Any], result: Result) -> dict[str, Any]:
     where = f"detection {host_id}/{record['qid']}/{record['unique_vuln_id']}"
     fields = {"subscription_key": key, "host_id": host_id, "qid": record["qid"], "unique_vuln_id": record["unique_vuln_id"]}
     fields.update(_carry(QualysDetection, record, _DETECTION_FIELDS, result, where))
@@ -176,10 +177,12 @@ def _detection_node(ref: str, key: str, host_id: str, record: dict[str, Any], re
     fixed = record.get("status") == "Fixed"
     fields["state"] = "resolved" if fixed else "open"
     fields["resolution_source"] = "qualys_fixed" if fixed else None
-    # Packages come with the parsers (the next target); until then the parse state is unobserved, never "no package".
-    fields["parse_state"] = None
-    fields["parser_version"] = None
-    fields["package_observations"] = None
+    # Exactly one parse state per detection (req-qualys-parsers-1); the result text itself is stored unchanged.
+    parsed = parsers.parse({"qid": record["qid"], "results": record.get("results"), "os": os_name})
+    fields["parse_state"] = parsed.state
+    fields["parser_version"] = parsed.parser_version
+    fields["package_observations"] = [o.as_dict() for o in parsed.observations] if parsed.state == parsers.PARSED else None
+    result.count(f"parse_{parsed.state}")
     return envelope(ref, QualysDetection, f"QID {record['qid']} on host {host_id}", fields)
 
 
@@ -286,7 +289,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
                     continue
                 seen_detections.add(parts)
                 ref = "d" + "-".join(parts)
-                result.nodes.append(_detection_node(ref, key, host_id, detection, result))
+                result.nodes.append(_detection_node(ref, key, host_id, host.get("os"), detection, result))
                 result.edges.append(edge(f"e-on-{ref}", "DETECTED_ON_HOST__qualys", ref, host_ref))
                 result.edges.append(edge_to_key(f"e-qid-{ref}", "ABOUT_QID__qualys", ref, QualysQid.ENTITY_TYPE, {"subscription_key": key, "qid": parts[1]}))
                 qids_named.add(parts[1])

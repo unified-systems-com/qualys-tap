@@ -1,0 +1,6 @@
+# fixture-evidence: documented (the package-table shape Elastic's qualys_vmdr pipeline parses, with the webkit2gtk row from Qualys's knowledge-base sample QID 6666666; assembled, not a recording)
+Package	Installed Version	Required Version
+webkit2gtk	2.44.2-1~deb12u1	2.44.3-1~deb12u1
+libjavascriptcoregtk-4.1-0	2.44.2-1~deb12u1	2.44.3-1~deb12u1
+
+The affected packages are listed above.

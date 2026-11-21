@@ -79,7 +79,7 @@ Eight consequences shape v0:
 | req-qualys-qid | [Knowledge-Base Records](#knowledge-base-records) | In Development | A node per QID seen, from knowledge base 4.0, with CVSS and the CVE list; linked to each CVE's shared vulnerability record |
 | req-qualys-ec2-link | [EC2 Instance Link](#ec2-instance-link) | Approved for Development | A host links to `aws_core`'s EC2 instance by exact `CLOUD_RESOURCE_ID` with provider AWS, only when it exists; never written; optional dependency |
 | req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | Approved for Development | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
-| req-qualys-parsers | [Result Parsers](#result-parsers) | Approved for Development | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
+| req-qualys-parsers | [Result Parsers](#result-parsers) | In Development | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
 | req-qualys-package-link | [Package Link](#package-link) | Approved for Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
 | req-qualys-file-import | [Export Archive Import](#export-archive-import) | In Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
@@ -564,7 +564,7 @@ Edges:
 ----
 RID: `req-qualys-parsers`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 What ties a detection to a package is in its result text, not in a structured field. Qualys's package QIDs print a tab-separated table headed `Package`, `Installed Version`, `Required Version`. That shape is far more uniform across distributions than Tenable's per-plugin output, so v0 starts from one table parser with per-ecosystem version rules, under the same registry contract as Tenable's.
 

@@ -22,9 +22,11 @@ class TestGeneratedNotTyped:
         assert detection["RESPONSE"]["required_children"] == ["DATETIME"]
         assert documents["knowledgebase"]["elements"]["CVE"]["required_children"] == ["ID", "URL"]
 
-    def test_undeclared_element_is_recorded_as_such(self) -> None:
+    def test_asset_id_is_declared_by_the_served_dtd(self) -> None:
+        # The reference PDF named ASSET_ID without declaring it; the DTD Qualys serves declares it, so it is read
+        # as declared and consumed.json no longer lists it under named_not_declared.
         asset = build.build()["documents"]["detection"]["elements"]["ASSET_ID"]
-        assert asset["declared"] is False and asset["content"] is None and asset["note"]
+        assert asset["declared"] is True and asset["content"] == "(#PCDATA)"
 
 
 CONTRACT = Path(build.__file__).resolve().parent

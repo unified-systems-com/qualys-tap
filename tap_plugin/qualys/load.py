@@ -17,7 +17,6 @@ is particular to a file:
 """
 
 import contextlib
-import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -26,10 +25,10 @@ from pathlib import Path
 from typing import Any
 
 from tap_plugin.qualys.archive import Archive, ArchiveRefused, open_archive, read_snapshot
-from tap_plugin.qualys.contract.reduce import ReduceError, reduce
+from tap_plugin.qualys.contract import drift
 from tap_plugin.qualys.decompose import COMPLETE, Run, decompose, document, parse_time
 from tap_plugin.qualys.identity import canonical_api_host, subscription_key
-from tap_plugin.qualys.parse import PageRefused, extract, parse_detection_page, parse_knowledgebase_page
+from tap_plugin.qualys.parse import PageRefused, parse_detection_page, parse_knowledgebase_page
 
 #: Clock skew allowed between Qualys's response time and the loading host.
 _SKEW = timedelta(minutes=5)
@@ -67,21 +66,15 @@ def _filter(scope: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _drift(dtds: dict[str, str]) -> list[dict[str, str]]:
-    """CONTRACT_DRIFT for each served DTD whose consumed elements differ from the committed extract."""
+    """CONTRACT_DRIFT for each served DTD whose consumed elements differ from the committed extract.
+
+    The comparison is the scheduled drift check's own (``contract.drift.compare``), so the two cannot disagree.
+    """
     warnings = []
-    consumed = json.loads((Path(__file__).resolve().parent / "contract" / "consumed.json").read_text(encoding="utf-8"))
     for name, text in sorted(dtds.items()):
-        doc = _DTD_DOCUMENT[name]
-        spec = consumed["documents"][doc]
-        try:
-            served = reduce(text, spec["elements"], spec.get("named_not_declared"))
-        except ReduceError as exc:
-            warnings.append({"code": "CONTRACT_DRIFT", "detail": f"{name}: {str(exc)[:300]}"})
-            continue
-        committed = extract()["documents"][doc]["elements"]
-        changed = sorted(e for e in committed if {k: v for k, v in served.get(e, {}).items()} != committed[e])
-        if changed:
-            warnings.append({"code": "CONTRACT_DRIFT", "detail": f"{name}: consumed element(s) differ: {', '.join(changed[:20])}"})
+        consumed, _ = drift.compare(_DTD_DOCUMENT[name], text)
+        if consumed:
+            warnings.append({"code": "CONTRACT_DRIFT", "detail": f"{name}: consumed element(s) differ: {', '.join(consumed[:20])}"[:400]})
     return warnings
 
 

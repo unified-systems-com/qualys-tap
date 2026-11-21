@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tap_plugin.qualys import parse
 from tap_plugin.qualys.parse import MAX_DEPTH, PageRefused, parse_detection_page, parse_knowledgebase_page
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -117,6 +118,18 @@ class TestRefused:
         body = b"<HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>x</DATETIME>" + b"<a>" * (MAX_DEPTH + 1) + b"</a>" * (MAX_DEPTH + 1) + b"</RESPONSE></HOST_LIST_VM_DETECTION_OUTPUT>"
         with pytest.raises(PageRefused, match="deeper"):
             parse_detection_page(body)
+
+    def test_too_many_elements_refused_while_parsing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # qualys-tap#15: the count is checked as elements arrive. The page below is cut off after the bound, so
+        # a parser that built the whole tree first would report "not well-formed" instead.
+        monkeypatch.setattr(parse, "MAX_ELEMENTS", 50)
+        body = b"<HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>x</DATETIME>" + b"<a/>" * 100 + b"<unclosed"
+        with pytest.raises(PageRefused, match="more than 50 elements"):
+            parse_detection_page(body)
+
+    def test_a_page_at_the_bound_is_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(parse, "MAX_ELEMENTS", 3)
+        assert parse_detection_page(b"<HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>x</DATETIME></RESPONSE></HOST_LIST_VM_DETECTION_OUTPUT>").hosts == []
 
     def test_doctype_with_external_dtd_reference_is_read(self) -> None:
         # Qualys's responses name their DTD by URL; the parser reads the page without fetching it.

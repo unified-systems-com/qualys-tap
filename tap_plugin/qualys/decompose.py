@@ -21,6 +21,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from urllib.parse import parse_qs, urlsplit
 
 from django.db import models as dj_models
 
@@ -32,6 +33,40 @@ from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
 from tap_plugin.qualys import neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
+
+def _first_host_id(page: DetectionPage) -> int | None:
+    ids = [h.get("host_id") for h in page.hosts]
+    return int(ids[0]) if ids and isinstance(ids[0], str) and ids[0].isdigit() else None
+
+
+def _last_host_id(page: DetectionPage) -> int | None:
+    ids = [h.get("host_id") for h in page.hosts]
+    return int(ids[-1]) if ids and isinstance(ids[-1], str) and ids[-1].isdigit() else None
+
+
+def chain_break(pages: list[DetectionPage]) -> str | None:
+    """Why the pages are not one unbroken next-page chain, or None (unified-systems-com/qualys-tap#19).
+
+    Every page but the last must link onward, and the page after it must be the one that link names: its
+    first host at or above the link's ``id_min`` and above the linking page's last host. A missing link, a
+    reordered pair or a repeated page breaks the chain, so the read cannot count as complete or move the
+    watermark. One gap it cannot see: a page dropped cleanly from the middle, whose successor still starts
+    above the link's ``id_min``, since host ids are sparse and Qualys promises no exact start.
+    """
+    for number, (page, following) in enumerate(zip(pages, pages[1:]), 1):
+        if not page.next_url:
+            return f"detection page {number} has no next-page link, yet a page follows it"
+        values = parse_qs(urlsplit(page.next_url).query).get("id_min", [])
+        if len(values) != 1 or not values[0].isdigit():
+            return f"detection page {number} links onward with no usable id_min"
+        first = _first_host_id(following)
+        last = _last_host_id(page)
+        if first is None:
+            return f"detection page {number + 1} has no host id to check against the link"
+        if first < int(values[0]) or (last is not None and first <= last):
+            return f"detection page {number + 1} is not the page detection page {number} links to"
+    return None
+
 
 COMPLETE = "complete"
 WINDOW = "window"
@@ -425,6 +460,9 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         elif pages[-1].next_url:
             reason = "labelled complete, but its last page links to a next page that was not read"
             warnings.append({"code": "TRUNCATED", "detail": "the last detection page carries a next-page link"})
+        elif (gap := chain_break(pages)) is not None:
+            reason = "labelled complete, but its pages do not form one unbroken chain"
+            warnings.append({"code": "TRUNCATED", "detail": gap})
         if reason:
             read_kind = NARROWER
             warnings.append({"code": "READ_KIND_DOWNGRADED", "detail": reason})
@@ -536,6 +574,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         and not result.partly_read_pages
         and not run.detection_pages_not_read
         and not (pages and pages[-1].next_url)
+        and chain_break(pages) is None
     )
     if clean:
         sub_node["node"]["watermark"] = run.started_at.isoformat()

@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from tap_plugin.qualys.decompose import COMPLETE, NARROWER, WINDOW, Run, decompose, parse_time
+from tap_plugin.qualys.decompose import COMPLETE, NARROWER, WINDOW, Run, chain_break, decompose, parse_time
 from tap_plugin.qualys.identity import subscription_key
-from tap_plugin.qualys.parse import parse_detection_page, parse_knowledgebase_page
+from tap_plugin.qualys.parse import DetectionPage, parse_detection_page, parse_knowledgebase_page
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 HOST = "https://qualysapi.qg2.apps.qualys.com"
@@ -328,3 +328,48 @@ class TestEc2Link:
         result = decompose(_run(), _page_with(azure), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))
         assert _ec2_edges(result) == []
         assert result.counters["ec2_unresolved"] == 1 and result.counters["ec2_unresolved_deprecated_field"] == 1
+
+
+def _linked(first: str, last: str, id_min: str | None) -> DetectionPage:
+    link = None if id_min is None else f"{HOST}/api/6.0/fo/asset/host/vm/detection/?action=list&truncation_limit=2&id_min={id_min}"
+    return DetectionPage(response_datetime=None, hosts=[{"host_id": first, "detections": []}, {"host_id": last, "detections": []}], next_url=link, warning=None)
+
+
+class TestUnbrokenChain:
+    """A read counts as complete only when its pages are one next-page chain (unified-systems-com/qualys-tap#19)."""
+
+    def test_a_whole_chain(self) -> None:
+        assert chain_break([_linked("1", "2", "3"), _linked("3", "4", "5"), _linked("5", "6", None)]) is None
+        assert chain_break([_linked("1", "2", None)]) is None and chain_break([]) is None
+
+    def test_a_repeated_page(self) -> None:
+        gap = chain_break([_linked("1", "2", "3"), _linked("3", "4", "5"), _linked("1", "2", None)])
+        assert gap == "detection page 3 is not the page detection page 2 links to"
+
+    def test_the_limit_a_cleanly_dropped_page(self) -> None:
+        # Stated, not hidden: a page dropped from the middle, whose successor still starts above the link's
+        # id_min, leaves a chain the links alone cannot tell from a whole one. Host ids are sparse, so
+        # "starts exactly at id_min" is not a rule Qualys promises.
+        assert chain_break([_linked("1", "2", "3"), _linked("5", "6", None)]) is None
+
+    def test_a_middle_page_without_a_link(self) -> None:
+        assert chain_break([_linked("1", "2", None), _linked("3", "4", None)]) == "detection page 1 has no next-page link, yet a page follows it"
+
+    def test_a_reordered_pair(self) -> None:
+        assert chain_break([_linked("3", "4", "5"), _linked("1", "2", "3"), _linked("5", "6", None)]) == "detection page 2 is not the page detection page 1 links to"
+
+    def test_a_link_without_id_min(self) -> None:
+        page = _linked("1", "2", None)
+        page.next_url = f"{HOST}/api/6.0/fo/asset/host/vm/detection/?action=list"
+        assert chain_break([page, _linked("3", "4", None)]) == "detection page 1 links onward with no usable id_min"
+
+    def test_a_broken_complete_read_is_narrower_and_withdraws_nothing(self) -> None:
+        documented = parse_detection_page((FIXTURES / "hld-documented.xml").read_bytes())
+        pages = [documented, *_complete_pages()]  # the documented page has no next link, yet a page follows
+        stored = {"subscription_key": KEY, "host_id": "2002", "ip": "10.0.9.9", "dns": None, "state": "current", "os": "Amazon Linux 2"}
+        result = decompose(_run(COMPLETE), pages, _kb(), FakeGrid(hosts={"2002": stored}))
+        assert not [h for h in _nodes(result, "qualys__qualys_host") if h["host_id"] == "2002"]
+        (run_node,) = _nodes(result, "qualys__qualys_scan_run")
+        assert run_node["read_kind"] == NARROWER
+        assert {"code": "TRUNCATED", "detail": "detection page 1 has no next-page link, yet a page follows it"} in run_node["warnings"]
+        assert not result.watermark_advanced

@@ -57,6 +57,10 @@ class TestValid:
         _write(tmp_path, "acme", _data(scope={"tag_ids": [9, 3]}, ca_bundle="/etc/ssl/qualys.pem"))
         c = _one(tmp_path)
         assert c.standing_scope == {"tag_ids": [3, 9]} and c.ca_bundle == "/etc/ssl/qualys.pem"
+        # A caller changing what it was handed changes nothing the credential holds.
+        c.standing_scope["tag_ids"].append(99)
+        c.standing_scope.clear()
+        assert c.standing_scope == {"tag_ids": [3, 9]}
 
     def test_other_scopes_and_examples_are_ignored(self, tmp_path: Path) -> None:
         _write(tmp_path, "gh", {"token": "x"}, scope="github_core", kind="github_pat")

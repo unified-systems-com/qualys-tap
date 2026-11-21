@@ -45,12 +45,17 @@ class Credential:
     label: str
     key: str
     ca_bundle: str | None
-    standing_scope: dict[str, list[int]]
+    _scope: tuple[tuple[str, tuple[int, ...]], ...]
     _username: str = field(repr=False)
     _password: str = field(repr=False)
 
     def __repr__(self) -> str:
         return f"Credential(qualified={self.qualified!r}, api_host={self.api_host!r}, label={self.label!r})"
+
+    @property
+    def standing_scope(self) -> dict[str, list[int]]:
+        """The validated standing scope, as a fresh copy each time, so no caller can change what was validated."""
+        return {kind: list(ids) for kind, ids in self._scope}
 
     @property
     def basic(self) -> tuple[str, str]:
@@ -99,7 +104,7 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
         label=data["subscription"],
         key=subscription_key(host, data["subscription"]),
         ca_bundle=data.get("ca_bundle"),
-        standing_scope={k: sorted(v) for k, v in scope.items()},
+        _scope=tuple((k, tuple(sorted(v))) for k, v in sorted(scope.items())),
         _username=data["username"],
         _password=data["password"],
     )

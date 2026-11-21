@@ -120,11 +120,13 @@ def private_directory(base: Path, key: str, now: datetime) -> Path:
         raise ObserveError("the recording directory is inside a repository; recordings are never committed")
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     for directory in (base, base / key):
+        created = not directory.exists()
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         # A link below the checked base could point the recordings anywhere, a repository included.
         if directory.is_symlink() or directory.resolve() != directory:
             raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked")
-        os.chmod(directory, 0o700)
+        if created:  # an existing directory keeps its mode; the run directory below is what is owner-only
+            os.chmod(directory, 0o700)
     # Two observations of one key in the same second get distinct directories, never a shared one.
     for suffix in ("", *(f"-{n}" for n in range(2, 10))):
         run = base / key / f"{stamp}{suffix}"
@@ -310,10 +312,10 @@ def run_reads(credential: Credential, client: ReadOnlyClient, anonymous: ReadOnl
 Check = Callable[[Observation, Recorder], tuple[str, str]]
 
 
-def _xml_roots(recorder: Recorder) -> list[Element]:
+def _xml_roots(recorder: Recorder, paths: tuple[str, ...] = (DETECTION_PATH, KNOWLEDGEBASE_PATH)) -> list[Element]:
     roots = []
     for _, ex in recorder.exchanges:
-        if ex.status == 200 and urlsplit(ex.url).path in (DETECTION_PATH, KNOWLEDGEBASE_PATH):
+        if ex.status == 200 and urlsplit(ex.url).path in paths:
             try:
                 roots.append(SafeET.fromstring(ex.body))
             except (DefusedXmlException, SafeET.ParseError):
@@ -326,9 +328,11 @@ def _detection_pages(obs: Observation) -> list[DetectionPage]:
 
 
 def check_subscription_identity(obs: Observation, recorder: Recorder) -> tuple[str, str]:
+    # The ledger names both kinds of response as the evidence, so one kind alone settles nothing.
+    for path, kind in ((DETECTION_PATH, "detection"), (KNOWLEDGEBASE_PATH, "knowledge-base")):
+        if not _xml_roots(recorder, (path,)):
+            return NOT_REACHED, f"no {kind} response was read"
     roots = _xml_roots(recorder)
-    if not roots:
-        return NOT_REACHED, "no detection or knowledge-base response was read"
     named = {el.tag for root in roots for el in root.iter() if _IDENTITY.search(el.tag)}
     if named:
         return CONTRADICTED, f"element(s) {_names(named)} in the responses"

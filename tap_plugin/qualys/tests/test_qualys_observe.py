@@ -7,6 +7,7 @@ request in these tests went through the allowlist. No socket is opened, and noth
 import base64
 import io
 import json
+import os
 import socket
 import stat
 from pathlib import Path
@@ -197,6 +198,10 @@ class TestLedger:
         assert _ledger_lines(text)["kb-409-meaning"] == (observe.SETTLED, "knowledge-base 409 with code(s) 2003")
         assert "knowledgebase-1                HTTP 409" in text
 
+    def test_detections_alone_do_not_settle_subscription_identity(self, secrets: Path, tmp_path: Path) -> None:
+        lines = _ledger_lines(_run(secrets, tmp_path / "rec", Router(kb=(500, b"<html>down</html>")))[1])
+        assert lines["subscription-identity"] == (observe.NOT_REACHED, "no knowledge-base response was read")
+
     def test_a_failed_probe_still_reports_every_entry(self, secrets: Path, tmp_path: Path) -> None:
         router = Router(probe=(401, b"<html>no</html>"))
         code, text = _run(secrets, tmp_path / "rec", router)
@@ -297,6 +302,16 @@ class TestLocalAndPrivate:
         header, _, body = kb.read_bytes().partition(b"\n\n")
         meta = json.loads(header)
         assert meta["status"] == 200 and meta["body_not_read"].startswith("response larger than") and body == b""
+
+    def test_an_existing_base_keeps_its_mode(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
+        base = tmp_path / "shared"
+        base.mkdir()
+        os.chmod(base, 0o755)
+        run = observe.private_directory(base, "acme", datetime(2026, 11, 21, 6, 0, tzinfo=UTC))
+        assert stat.S_IMODE(base.stat().st_mode) == 0o755
+        assert stat.S_IMODE((base / "acme").stat().st_mode) == 0o700 and stat.S_IMODE(run.stat().st_mode) == 0o700
 
     def test_same_second_observations_get_their_own_directories(self, tmp_path: Path) -> None:
         from datetime import UTC, datetime

@@ -1,6 +1,7 @@
 """The scheduled drift check and its comparison (req-qualys-drift-ci). No test reaches the network."""
 
 import hashlib
+import io
 import socket
 from pathlib import Path
 from typing import Any
@@ -35,35 +36,22 @@ class TestFailsOnConsumedDrift:
         for document in drift.DTD_PATHS:
             assert drift.compare(document, _dtd(document)) == ([], [])
 
-    def test_a_consumed_content_model_change_fails(self, tmp_path: Path) -> None:
+    def test_a_consumed_content_model_change_fails(self) -> None:
         changed = _dtd("detection").replace("<!ELEMENT HOST (ID,", "<!ELEMENT HOST (ID, NEW_THING,")
         assert drift.compare("detection", changed)[0] == ["HOST"]
-        path = tmp_path / "output.dtd"
-        path.write_text(changed)
-        assert drift.check_file("detection", path) == 1
+        assert drift.check_file("detection", io.BytesIO(changed.encode())) == 1
 
     def test_a_consumed_attribute_change_fails(self) -> None:
         changed = _dtd("detection").replace("<!ATTLIST QDS severity CDATA #REQUIRED>", "<!ATTLIST QDS severity CDATA #IMPLIED>")
         assert drift.compare("detection", changed)[0] == ["QDS"]
 
-    def test_file_mode_reads_only_a_bounded_regular_dtd(self, tmp_path: Path) -> None:
-        good = tmp_path / "output.dtd"
-        good.write_text(_dtd("detection"))
-        cases = {
-            tmp_path / "output.txt": "only a .dtd file",
-            tmp_path / "linked.dtd": "cannot be opened",
-            tmp_path / "dir.dtd": "not a regular file",
-            tmp_path / "big.dtd": "larger than",
-        }
-        (tmp_path / "output.txt").write_text(_dtd("detection"))
-        (tmp_path / "linked.dtd").symlink_to(good)
-        (tmp_path / "dir.dtd").mkdir()
-        (tmp_path / "big.dtd").write_bytes(b" " * (drift.MAX_DTD_BYTES + 1))
-        for path, reason in cases.items():
-            with pytest.raises(drift.DriftError, match=reason):
-                drift.read_dtd_file(path)
-        assert drift.main(["file", "detection", str(tmp_path / "linked.dtd")]) == 2
-        assert drift.check_file("detection", good) == 0
+    def test_file_mode_reads_standard_input_within_the_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        with pytest.raises(drift.DriftError, match="larger than"):
+            drift.read_dtd(io.BytesIO(b" " * (drift.MAX_DTD_BYTES + 1)))
+        monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(_dtd("detection").encode())))
+        assert drift.main(["file", "detection"]) == 0
+        with pytest.raises(SystemExit):
+            drift.main(["file", "detection", "/etc/passwd"])  # a path is not an argument
 
     def test_a_dtd_that_cannot_be_reduced_fails(self) -> None:
         consumed, _ = drift.compare("detection", '<!ENTITY % x SYSTEM "http://example.invalid/x">%x;')
@@ -72,12 +60,10 @@ class TestFailsOnConsumedDrift:
 
 @pytest.mark.spec("req-qualys-drift-ci-2")
 class TestReportsOtherChanges:
-    def test_an_unconsumed_addition_is_reported_and_passes(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_an_unconsumed_addition_is_reported_and_passes(self, capsys: pytest.CaptureFixture[str]) -> None:
         changed = _dtd("knowledgebase") + "\n<!ELEMENT BRAND_NEW (#PCDATA)>\n"
         assert drift.compare("knowledgebase", changed) == ([], ["added BRAND_NEW"])
-        path = tmp_path / "kb.dtd"
-        path.write_text(changed)
-        assert drift.check_file("knowledgebase", path) == 0
+        assert drift.check_file("knowledgebase", io.BytesIO(changed.encode())) == 0
         assert "not consumed, reported only: added BRAND_NEW" in capsys.readouterr().out
 
     def test_served_check_against_a_fake_host(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -172,4 +158,4 @@ def test_standard_library_only() -> None:
     tree = ast.parse(Path(drift.__file__).read_text())
     roots = {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     roots |= {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
-    assert roots <= {"argparse", "hashlib", "json", "os", "stat", "urllib", "pathlib", "typing", "tap_plugin"}
+    assert roots <= {"argparse", "hashlib", "json", "os", "sys", "urllib", "pathlib", "typing", "tap_plugin"}

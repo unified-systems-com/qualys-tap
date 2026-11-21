@@ -13,8 +13,8 @@ observation ledger (``dtd-unauthenticated``):
   changed, and the DTDs must be extracted again and compared, which ``file`` then does offline.
 - ``served --host`` fetches the two DTDs from a platform host, with no credential, and compares them. Qualys
   served both without one on 2026-11-21, so this is the source the workflow runs.
-- ``file <document> <path>`` compares a DTD on disk: a regular ``.dtd`` file, not a link, within the size
-  bound every DTD read has.
+- ``file <document> < <path>`` compares a DTD on disk, read from standard input within the size bound every
+  DTD read has. The command names no path and opens no file; the shell does that.
 
 Standard library only, so the workflow needs no install step. No credential is read or sent, nothing is
 written but the run summary, and no redirect is followed.
@@ -24,11 +24,11 @@ import argparse
 import hashlib
 import json
 import os
-import stat
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from tap_plugin.qualys.contract.reduce import MAX_DTD_BYTES, ReduceError, parse_dtd, reduce
 
@@ -127,7 +127,7 @@ def check_reference(fetcher: Any = None) -> int:
         "## Qualys DTD reference",
         f"- CHANGED: sha256 {digest[:16]}… differs from the {meta['source_version']} the committed DTDs came from",
         "- extract the two DTDs from the new reference into tests/vendor, then run "
-        "`python -m tap_plugin.qualys.contract.drift file <document> <path>` on each to see whether a consumed element moved",
+        "`python -m tap_plugin.qualys.contract.drift file <document> < <path>` on each to see whether a consumed element moved",
     ])
     return 1
 
@@ -144,26 +144,16 @@ def check_served(host: str, fetcher: Any = None) -> int:
     return 1 if failed else 0
 
 
-def read_dtd_file(path: Path) -> str:
-    """A DTD named on the command line: a regular ``.dtd`` file, not a link, no larger than any DTD read."""
-    if path.suffix != ".dtd":
-        raise DriftError(f"{path.name}: only a .dtd file is compared")
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except OSError as exc:
-        raise DriftError(f"{path.name}: cannot be opened ({exc.strerror})") from exc
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
-        os.close(fd)
-        raise DriftError(f"{path.name}: not a regular file")
-    with os.fdopen(fd, "rb") as handle:
-        data = handle.read(MAX_DTD_BYTES + 1)
+def read_dtd(stream: BinaryIO) -> str:
+    """A DTD given on standard input, no larger than any DTD read. The command takes no path, so it opens nothing."""
+    data = stream.read(MAX_DTD_BYTES + 1)
     if len(data) > MAX_DTD_BYTES:
-        raise DriftError(f"{path.name}: larger than {MAX_DTD_BYTES} bytes")
+        raise DriftError(f"the DTD is larger than {MAX_DTD_BYTES} bytes")
     return data.decode("utf-8", errors="replace")
 
 
-def check_file(document: str, path: Path) -> int:
-    consumed, other = compare(document, read_dtd_file(path))
+def check_file(document: str, stream: BinaryIO) -> int:
+    consumed, other = compare(document, read_dtd(stream))
     _summary(["## DTD on disk", *_report(document, consumed, other)])
     return 1 if consumed else 0
 
@@ -174,16 +164,15 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reference", help="compare the DTD reference's hash with the one the committed DTDs came from")
     served = sub.add_parser("served", help="fetch both DTDs from a platform host, with no credential, and compare")
     served.add_argument("--host", required=True, help="a platform API root, such as https://qualysapi.qualys.com")
-    on_disk = sub.add_parser("file", help="compare a DTD on disk")
+    on_disk = sub.add_parser("file", help="compare a DTD on disk, given on standard input")
     on_disk.add_argument("document", choices=sorted(DTD_PATHS))
-    on_disk.add_argument("path", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.source == "reference":
             return check_reference()
         if args.source == "served":
             return check_served(args.host)
-        return check_file(args.document, args.path)
+        return check_file(args.document, sys.stdin.buffer)
     except DriftError as exc:
         _summary(["## Drift check could not run", f"- {exc}"])
         return 2

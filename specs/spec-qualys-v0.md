@@ -236,7 +236,7 @@ A scheduled workflow compares the DTDs Qualys serves with the committed sources,
 Qualys serves its API DTDs without a credential: fetched from `qualysapi.qualys.com` on 2026-11-21. So the workflow fetches both from the documented DTD paths on that host (`drift served`), with no redirect followed and a size bound. Other platforms are not checked; the ledger entry `dtd-unauthenticated` stays open for them, and the observation command reports it per subscription. Two other modes stay available by hand:
 
 - `drift reference` compares the reference PDF's hash with the one recorded in `provenance.json`, for a platform that does not serve its DTDs;
-- `drift file` compares a DTD on disk.
+- `drift file <document> < <path>` compares a DTD on disk, read from standard input; the command takes no path.
 
 The DTDs carried by each export archive are compared at load time through the same function (`req-qualys-file-import`).
 

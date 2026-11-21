@@ -482,10 +482,11 @@ def check_dtd_unauthenticated(obs: Observation, recorder: Recorder) -> tuple[str
         return NOT_REACHED, "no DTD was asked for"
     served = [n for n, status in obs.dtd_anonymous.items() if status == 200 and _anonymous_dtd(recorder, n)]
     refused = [n for n, status in obs.dtd_anonymous.items() if status in (401, 403)]
-    if served:
-        return CONTRADICTED, f"served without a credential: {', '.join(sorted(served))}"
-    if refused and len(refused) == len(obs.dtd_anonymous):
-        return SETTLED, "both refused without a credential"
+    # qualysapi.qualys.com served both on 2026-11-21; a refusal on this subscription's platform says it differs.
+    if refused:
+        return CONTRADICTED, f"refused without a credential: {', '.join(sorted(refused))}"
+    if served and len(served) == len(obs.dtd_anonymous):
+        return SETTLED, "both served without a credential"
     statuses = ", ".join(f"{n} {'HTTP ' + str(s) if s else 'not read'}" for n, s in sorted(obs.dtd_anonymous.items()))
     return NOT_REACHED, f"anonymous reads: {statuses}"
 

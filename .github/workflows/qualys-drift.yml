@@ -1,0 +1,27 @@
+# Scheduled drift check (req-qualys-drift-ci): does what Qualys publishes still match what this plugin reads?
+# Read-only by construction: contents: read, no secret, no Qualys credential, no issue opened. A red run is
+# the signal. Standard-library Python only (tap_plugin/qualys/contract/drift.py), so nothing is installed.
+#
+# Qualys serves both API DTDs without a credential (observed 2026-11-21 on qualysapi.qualys.com), so the
+# check fetches them from the documented paths there and compares them with the committed sources under
+# tests/vendor. A changed consumed element fails the run; any other change is listed in the run summary.
+# `drift reference` (the reference PDF's hash) and `drift file` stay available by hand.
+name: qualys-drift
+on:
+  schedule:
+    - cron: "41 7 * * 1"   # Mondays; minute staggered from the org's other schedules
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  served:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false  # never leave the job token readable in .git config
+      - name: Compare the DTDs Qualys serves with the committed sources
+        run: python3 -m tap_plugin.qualys.contract.drift served --host https://qualysapi.qualys.com

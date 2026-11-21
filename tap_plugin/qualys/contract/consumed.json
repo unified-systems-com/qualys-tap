@@ -62,10 +62,7 @@
         "CODE",
         "TEXT",
         "URL"
-      ],
-      "named_not_declared": {
-        "ASSET_ID": "HOST's content model names ASSET_ID? (returned with show_asset_id=1) but the published reference declares no ELEMENT for it; read as text."
-      }
+      ]
     },
     "knowledgebase": {
       "description": "KnowledgeBase VULN List Output (knowledge base API 4.0), from tests/vendor/kb-output.dtd.",

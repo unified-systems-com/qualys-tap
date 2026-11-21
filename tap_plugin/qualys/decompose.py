@@ -53,7 +53,7 @@ def chain_break(pages: list[DetectionPage]) -> str | None:
     watermark. One gap it cannot see: a page dropped cleanly from the middle, whose successor still starts
     above the link's ``id_min``, since host ids are sparse and Qualys promises no exact start.
     """
-    for number, (page, following) in enumerate(zip(pages, pages[1:]), 1):
+    for number, (page, following) in enumerate(zip(pages, pages[1:], strict=False), 1):
         if not page.next_url:
             return f"detection page {number} has no next-page link, yet a page follows it"
         values = parse_qs(urlsplit(page.next_url).query).get("id_min", [])

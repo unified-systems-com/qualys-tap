@@ -118,14 +118,23 @@ def private_directory(base: Path, key: str, now: datetime) -> Path:
     base = base.expanduser().resolve()
     if _inside_repository(base):
         raise ObserveError("the recording directory is inside a repository; recordings are never committed")
-    run = base / key / now.strftime("%Y%m%dT%H%M%SZ")
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
     for directory in (base, base / key):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         # A link below the checked base could point the recordings anywhere, a repository included.
         if directory.is_symlink() or directory.resolve() != directory:
             raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked")
         os.chmod(directory, 0o700)
-    run.mkdir(mode=0o700)
+    # Two observations of one key in the same second get distinct directories, never a shared one.
+    for suffix in ("", *(f"-{n}" for n in range(2, 10))):
+        run = base / key / f"{stamp}{suffix}"
+        try:
+            run.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise ObserveError("ten observations of this key started in the same second; try again")
     os.chmod(run, 0o700)
     if run.resolve() != run or _inside_repository(run.resolve()):
         raise ObserveError("the recording directory is inside a repository; recordings are never committed")
@@ -148,6 +157,7 @@ class Recorder:
             "status": exchange.status,
             "response_headers": exchange.response_headers,
             "request_header_names": exchange.request_header_names,
+            "body_not_read": exchange.body_not_read,
         }
         path = self.directory / f"{len(self.exchanges):02d}-{self.step}.rec"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)

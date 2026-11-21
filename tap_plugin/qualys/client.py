@@ -195,6 +195,9 @@ class Exchange:
     response_headers: dict[str, str]
     request_header_names: list[str]
     body: bytes
+    #: Why the body was not read whole (too large, or the stream broke); None when it was. The observer still sees
+    #: the status and headers of a response the transport refused to read.
+    body_not_read: str | None = None
 
 
 Observer = Callable[[Exchange], None]
@@ -263,16 +266,12 @@ class ReadOnlyClient:
             )
             try:
                 body = self._read(raw)
+            except (ReadFailed, requests.RequestException) as exc:
+                self._observe(url, raw, prepared, b"", type(exc).__name__ if not isinstance(exc, ReadFailed) else str(exc))
+                raise
             finally:
                 raw.close()
-            if self._observer is not None:
-                self._observer(Exchange(
-                    url=url,
-                    status=raw.status_code,
-                    response_headers={k: v for k, v in raw.headers.items() if k.lower() != "set-cookie"},
-                    request_header_names=sorted(prepared.headers.keys()),
-                    body=body,
-                ))
+            self._observe(url, raw, prepared, body, None)
             headers = {k: v for k, v in raw.headers.items() if _RECORDED.match(k)}
             if raw.status_code == 200:
                 return Response(url=url, status=200, body=body, headers=headers, waits=attempt)
@@ -287,6 +286,18 @@ class ReadOnlyClient:
                 raise ReadFailed("Qualys answered with a redirect, which is never followed", status=raw.status_code)
             raise ReadFailed(f"Qualys answered HTTP {raw.status_code}", status=raw.status_code)
         raise ReadFailed("throttled past the retry bound", status=409)  # unreachable; the loop returns or raises
+
+    def _observe(self, url: str, raw: requests.Response, prepared: requests.PreparedRequest, body: bytes, not_read: str | None) -> None:
+        if self._observer is None:
+            return
+        self._observer(Exchange(
+            url=url,
+            status=raw.status_code,
+            response_headers={k: v for k, v in raw.headers.items() if k.lower() != "set-cookie"},
+            request_header_names=sorted(prepared.headers.keys()),
+            body=body,
+            body_not_read=not_read,
+        ))
 
     @staticmethod
     def _read(raw: requests.Response) -> bytes:

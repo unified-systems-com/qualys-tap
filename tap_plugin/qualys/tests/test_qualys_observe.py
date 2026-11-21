@@ -282,6 +282,31 @@ class TestLocalAndPrivate:
         assert code == 2 and "symbolic link" in text
         assert router.seen == [] and list(repo.iterdir()) == [repo / ".git"]
 
+    def test_an_oversized_response_is_still_recorded(self, secrets: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The transport refuses to read a body past its ceiling; the observation still records that it came back.
+        from tap_plugin.qualys import client as transport
+
+        monkeypatch.setattr(transport, "MAX_PAGE_BYTES", 64 << 10)  # above every fixture page, below this body
+        router = Router(kb=(200, b"<x>" + b"y" * (128 << 10) + b"</x>"))
+        code, text = _run(secrets, tmp_path / "rec", router)
+        assert code == 0 and "knowledgebase-1                not read: ReadFailed" in text
+        (run,) = list((tmp_path / "rec" / "acme").iterdir())
+        files = sorted(run.iterdir())
+        assert len(files) == len(router.seen)
+        (kb,) = [f for f in files if f.name.endswith("-knowledgebase-1.rec")]
+        header, _, body = kb.read_bytes().partition(b"\n\n")
+        meta = json.loads(header)
+        assert meta["status"] == 200 and meta["body_not_read"].startswith("response larger than") and body == b""
+
+    def test_same_second_observations_get_their_own_directories(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
+        now = datetime(2026, 11, 21, 6, 0, tzinfo=UTC)
+        runs = [observe.private_directory(tmp_path / "rec", "acme", now) for _ in range(9)]
+        assert len(set(runs)) == 9 and runs[1].name == "20261121T060000Z-2"
+        with pytest.raises(observe.ObserveError, match="same second"):
+            observe.private_directory(tmp_path / "rec", "acme", now)
+
     def test_refused_inside_a_repository(self, secrets: Path, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
         (repo / ".git").mkdir(parents=True)

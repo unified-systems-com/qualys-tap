@@ -111,6 +111,12 @@ class TestBounded:
         with pytest.raises(ReduceError, match="not declared"):
             reduce("<!ELEMENT A (B?)>", ["A", "B"])
 
+    def test_named_not_declared_is_recorded_as_undeclared(self) -> None:
+        # The served DTDs declare everything they name, so the mechanism is held here on its own.
+        out = reduce("<!ELEMENT A (B?)>", ["A", "B"], {"B": "named by A, never declared"})
+        assert out["B"] == {"content": None, "required_children": [], "single_children": [], "attributes": {}, "declared": False, "note": "named by A, never declared"}
+        assert out["A"]["declared"] is not False
+
     def test_named_not_declared_must_be_named(self) -> None:
         with pytest.raises(ReduceError, match="no content model names"):
             reduce("<!ELEMENT A (#PCDATA)>", ["A", "Z"], {"Z": "reason"})

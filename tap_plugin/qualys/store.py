@@ -7,6 +7,7 @@ actor (a collector task or the load command binds one).
 from collections.abc import Iterable
 from typing import Any
 
+from django.apps import apps
 from django.forms.models import model_to_dict
 
 from tap_plugin.qualys.models.host import QualysHost
@@ -42,6 +43,21 @@ class GridStore:
         if not qids:
             return set()
         return set(QualysQid.objects.filter(subscription_key=key, qid__in=qids).values_list("qid", flat=True))
+
+    def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
+        """Of these ids, those aws_core holds by exact ``instance_id``; None when aws_core is not installed.
+
+        Read only: this plugin never writes an EC2 instance (req-qualys-ec2-link-2). The model is resolved
+        through the app registry, so nothing here imports aws_core where it is absent.
+        """
+        try:
+            instance = apps.get_model("aws_core", "Ec2Instance")
+        except LookupError:
+            return None
+        ids = list(instance_ids)
+        if not ids:
+            return set()
+        return set(instance.objects.filter(instance_id__in=ids).values_list("instance_id", flat=True))
 
 
 def newest_read_time(key: str) -> Any:

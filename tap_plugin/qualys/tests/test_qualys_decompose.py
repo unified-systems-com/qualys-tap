@@ -19,10 +19,11 @@ KEY = subscription_key(HOST, "acme")
 
 
 class FakeGrid:
-    def __init__(self, hosts: dict[str, dict[str, Any]] | None = None, qids: set[str] | None = None, sub: dict[str, Any] | None = None):
+    def __init__(self, hosts: dict[str, dict[str, Any]] | None = None, qids: set[str] | None = None, sub: dict[str, Any] | None = None, ec2: set[str] | None = frozenset()):
         self.hosts = hosts or {}
         self.qids = qids or set()
         self.sub = sub
+        self.ec2 = ec2  # instance ids aws_core holds; None means aws_core is not installed
 
     def subscription(self, key: str) -> dict[str, Any] | None:
         return self.sub
@@ -32,6 +33,9 @@ class FakeGrid:
 
     def held_qids(self, key: str, qids) -> set[str]:
         return self.qids & set(qids)
+
+    def ec2_instances(self, instance_ids) -> set[str] | None:
+        return None if self.ec2 is None else set(self.ec2) & set(instance_ids)
 
 
 def _run(kind: str = COMPLETE, **kw: Any) -> Run:
@@ -234,3 +238,69 @@ class TestEdgesAndRun:
 )
 def test_parse_time(raw, parsed) -> None:
     assert parse_time(raw) == parsed
+
+
+def _run_node(result) -> dict[str, Any]:
+    (run,) = _nodes(result, "qualys__qualys_scan_run")
+    return run
+
+
+def _ec2_edges(result) -> list[dict[str, Any]]:
+    return [e["edge"] for e in result.edges if e["edge"]["edge_type"] == "TRACKS_EC2_INSTANCE__qualys"]
+
+
+def _page_with(cloud: bytes) -> list:
+    """The assembled page with its cloud block replaced."""
+    body = (FIXTURES / "hld-ec2-assembled.xml").read_bytes()
+    start = body.index(b"<CLOUD_PROVIDER>")
+    end = body.index(b"</EC2_INSTANCE_ID>") + len(b"</EC2_INSTANCE_ID>")
+    return [parse_detection_page(body[:start] + cloud + body[end:])]
+
+
+class TestEc2Link:
+    def test_held_instance_is_linked_by_exact_id(self) -> None:
+        result = decompose(_run(), _pages(), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))
+        (link,) = _ec2_edges(result)
+        assert link["to_key"] == {"entity_type": "aws_core__aws_ec2_instance", "key": {"instance_id": "i-0abc123def4567890"}}
+        assert link["from_ref"] == "h1001" and link["properties"] == {"source_field": "CLOUD_RESOURCE_ID"}
+        assert result.counters["ec2_linked"] == 1 and "ec2_unresolved" not in result.counters
+
+    def test_nothing_on_the_instance_is_written(self) -> None:
+        result = decompose(_run(), _pages(), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))
+        assert not [n for n in result.nodes if n["entity"]["entity_type"].startswith("aws_core__")]
+
+    def test_unheld_instance_is_counted_not_failed(self) -> None:
+        result = decompose(_run(), _pages(), _kb(), FakeGrid(ec2=set()))
+        assert _ec2_edges(result) == [] and result.counters["ec2_unresolved"] == 1
+        assert [w["code"] for w in _run_node(result)["warnings"]].count("EC2_UNRESOLVED") == 1
+
+    def test_without_aws_core_no_lookup_and_a_warning(self) -> None:
+        result = decompose(_run(), _pages(), _kb(), FakeGrid(ec2=None))
+        assert _ec2_edges(result) == []
+        assert "AWS_CORE_ABSENT" in [w["code"] for w in _run_node(result)["warnings"]]
+        assert "ec2_unresolved" not in result.counters
+
+    def test_exact_id_only(self) -> None:
+        # Case and surrounding space are not normalised: the id must equal the instance's instance_id exactly.
+        result = decompose(_run(), _pages(), _kb(), FakeGrid(ec2={"I-0ABC123DEF4567890"}))
+        assert _ec2_edges(result) == []
+
+    @pytest.mark.parametrize(
+        "cloud",
+        [
+            b"<CLOUD_PROVIDER>Azure</CLOUD_PROVIDER><CLOUD_SERVICE>VM</CLOUD_SERVICE><CLOUD_RESOURCE_ID>i-0abc123def4567890</CLOUD_RESOURCE_ID><EC2_INSTANCE_ID>x</EC2_INSTANCE_ID>",
+            b"<CLOUD_PROVIDER>AWS</CLOUD_PROVIDER><CLOUD_SERVICE>ECS</CLOUD_SERVICE><CLOUD_RESOURCE_ID>i-0abc123def4567890</CLOUD_RESOURCE_ID><EC2_INSTANCE_ID>x</EC2_INSTANCE_ID>",
+        ],
+    )
+    def test_aws_ec2_only(self, cloud: bytes) -> None:
+        result = decompose(_run(), _page_with(cloud), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))
+        assert _ec2_edges(result) == []
+        # Not an EC2 host, so not an unresolved one either, though the deprecated field is filled.
+        assert "ec2_unresolved" not in result.counters
+
+    def test_deprecated_field_never_links(self) -> None:
+        # An Azure-shaped id in the deprecated field, with no cloud fields: counted unresolved, never linked.
+        azure = b"<EC2_INSTANCE_ID>/subscriptions/0000/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1</EC2_INSTANCE_ID>"
+        result = decompose(_run(), _page_with(azure), _kb(), FakeGrid(ec2={"i-0abc123def4567890"}))
+        assert _ec2_edges(result) == []
+        assert result.counters["ec2_unresolved"] == 1 and result.counters["ec2_unresolved_deprecated_field"] == 1

@@ -11,7 +11,7 @@ description = "Qualys VMDR host detections, from Cloud Agents and scanner applia
 depends_on = [
   { slug = "computing_core", note = "FOUND_IN_PACKAGE__qualys targets computing_core__package; the collector creates an absent package a parser is sure of, with its key fields only (req-qualys-package-link)" },
   { slug = "compliance_core", note = "ABOUT_VULNERABILITY__qualys targets compliance_core__compliance_vulnerability and DETAILS_COMPLIANCE_FINDING__qualys targets compliance_core__compliance_finding; the collector writes the neutral finding per Qualys host and CVE and creates an absent vulnerability record (req-qualys-neutral)" },
-  { slug = "aws_core", optional = true, note = "TRACKS_EC2_INSTANCE__qualys targets aws_core__ec2_instance, looked up by exact instance_id and never written; without aws_core no lookup is made and the run records AWS_CORE_ABSENT (req-qualys-ec2-link)" },
+  { slug = "aws_core", optional = true, note = "TRACKS_EC2_INSTANCE__qualys targets aws_core__aws_ec2_instance, looked up by exact instance_id and never written; without aws_core no lookup is made and the run records AWS_CORE_ABSENT (req-qualys-ec2-link)" },
 ]
 
 # The author's DECLARED crypto posture (req-tap-plugin-manifest-v0-fips; spec-fips.md declare-vs-decide).

@@ -100,6 +100,15 @@ class Run:
     archive_sha256: str | None = None
     export_created_at: str | None = None
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    # A live run's own facts (req-qualys-probe, req-qualys-detection-read); a file run leaves them unset.
+    probe: dict[str, Any] | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    #: Whether the run followed every next-page link to the end, within its ceilings. None for a file run,
+    #: which never advances the live watermark (req-qualys-file-import).
+    walk_complete: bool | None = None
+    extra_warnings: list[dict[str, str]] = field(default_factory=list)
+    detection_pages_not_read: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -110,6 +119,7 @@ class Result:
     edges: list[dict[str, Any]] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=dict)
     authority: list[dict[str, Any]] = field(default_factory=list)
+    watermark_advanced: bool = False
     dropped: list[dict[str, str]] = field(default_factory=list)
     scopes_not_read: list[dict[str, str]] = field(default_factory=list)
     partly_read_pages: int = 0
@@ -518,6 +528,19 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             result.nodes.append(envelope(f"w{host_id}", QualysHost, stored.get("dns") or stored.get("ip") or f"host {host_id}", rewritten))
             result.count("hosts_withdrawn")
 
+    # The watermark: a live run's start, only after a run whose every detection page was read and validated
+    # (req-qualys-detection-read-3). A failed, truncated, ceiling-stopped or partly read run leaves it as it was.
+    clean = (
+        run.walk_complete is True
+        and read_kind in (COMPLETE, WINDOW)
+        and not result.partly_read_pages
+        and not run.detection_pages_not_read
+        and not (pages and pages[-1].next_url)
+    )
+    if clean:
+        sub_node["node"]["watermark"] = run.started_at.isoformat()
+        result.watermark_advanced = True
+
     # The run itself, last, so its counters are complete.
     run_fields = {
         "subscription_key": key,
@@ -528,13 +551,13 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         "read_at": run.read_at.isoformat() if run.read_at else None,
         "read_kind": read_kind,
         "applied_filter": run.applied_filter,
-        "window_start": None,
-        "window_end": None,
+        "window_start": run.window_start.isoformat() if run.window_start else None,
+        "window_end": run.window_end.isoformat() if run.window_end else None,
         "page_count": len(pages),
-        "probe": None,
+        "probe": run.probe,
         "counters": dict(result.counters),
-        "warnings": warnings + _dropped_warnings(result.dropped),
-        "scopes_not_read": result.scopes_not_read,
+        "warnings": warnings + run.extra_warnings + _dropped_warnings(result.dropped),
+        "scopes_not_read": run.detection_pages_not_read + result.scopes_not_read,
         "archive_sha256": run.archive_sha256,
         "export_created_at": parse_time(run.export_created_at),
     }

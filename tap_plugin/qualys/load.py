@@ -135,6 +135,11 @@ def _load_held(archive: Archive, api_host: str, label: str, key: str, sha256: st
             kb_pages.append(parse_knowledgebase_page(body))
         except PageRefused:
             kb_complete = False  # recorded through the QIDs it leaves not returned; the detections still load
+            continue
+        if kb_pages[-1].next_url:
+            # A chunk Qualys cut short: the export script does not follow the link (#16), so a QID asked of it and
+            # not returned may simply be on the page not read. It is unobserved, not absent.
+            kb_complete = False
 
     stamps = [parse_time(p.response_datetime) for p in pages]
     if any(s is None for s in stamps):

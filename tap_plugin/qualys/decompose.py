@@ -32,10 +32,7 @@ from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
 from tap_plugin.qualys import neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
-
-COMPLETE = "complete"
-WINDOW = "window"
-NARROWER = "narrower"
+from tap_plugin.qualys.read_kind import COMPLETE, NARROWER, WINDOW
 
 #: Host fields parsed to UTC beside the string Qualys sent (req-qualys-host).
 _PARSED_TIMES = {

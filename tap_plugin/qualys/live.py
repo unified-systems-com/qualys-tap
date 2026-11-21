@@ -21,8 +21,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadFailed, ReadOnlyClient, Response, TransportRefused
-from tap_plugin.qualys.decompose import COMPLETE, WINDOW
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage, PageRefused, parse_detection_page, parse_knowledgebase_page
+from tap_plugin.qualys.read_kind import COMPLETE, WINDOW
 
 #: How often a complete read is repeated so withdrawal can be judged (req-qualys-detection-read).
 COMPLETE_INTERVAL = timedelta(days=7)
@@ -91,9 +91,19 @@ def scope_params(scope: dict[str, list[int]]) -> dict[str, str]:
     return {}
 
 
-def detection_url(root: str, scope: dict[str, list[int]], window_start: datetime | None, limit: int = TRUNCATION_LIMIT, id_min: str | None = None) -> str:
-    """Every detection request, built here from the run's own parameters; only ``id_min`` ever comes from Qualys."""
-    params = {**_BASE, "truncation_limit": str(limit), **scope_params(scope)}
+def detection_url(
+    root: str,
+    scope: dict[str, list[int]],
+    window_start: datetime | None,
+    limit: int = TRUNCATION_LIMIT,
+    id_min: str | None = None,
+    omit: frozenset[str] = frozenset(),
+) -> str:
+    """Every detection request, built here from the run's own parameters; only ``id_min`` ever comes from Qualys.
+
+    ``omit`` drops fixed parameters; only the observation command uses it, to ask what Qualys returns without them.
+    """
+    params = {**{k: v for k, v in _BASE.items() if k not in omit}, "truncation_limit": str(limit), **scope_params(scope)}
     if window_start is not None:
         params["vm_processed_after"] = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
     if id_min is not None:

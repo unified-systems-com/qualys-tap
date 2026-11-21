@@ -1,0 +1,71 @@
+{
+  "description": "The open-assumptions ledger (req-qualys-observe): what this plugin assumes about Qualys's answers without a recording to check it. The observation command reports each entry as settled (a recording agrees with the assumption), contradicted (a recording disagrees) or not reached (nothing recorded could decide it). An entry leaves this file only by a spec change citing a recording.",
+  "entries": [
+    {
+      "id": "subscription-identity",
+      "question": "Does any allowlisted read return an identifier for the subscription?",
+      "assumption": "None does, so the subscription is named by the operator's label in the credential envelope.",
+      "settled_by": "Every detection and knowledge-base response, searched for an element whose name mentions a subscription or customer."
+    },
+    {
+      "id": "ec2-account-attribute",
+      "question": "What is the EC2 account-id attribute called in METADATA/EC2?",
+      "assumption": "Its NAME mentions an account, and the host stores the metadata map as returned, so no name is hard-coded.",
+      "settled_by": "The ATTRIBUTE names under METADATA/EC2 on the detection page; names only, never values."
+    },
+    {
+      "id": "cloud-resource-id-without-metadata",
+      "question": "Is CLOUD_RESOURCE_ID returned when host_metadata is not asked for?",
+      "assumption": "It is returned only with host_metadata, so every detection read asks for host_metadata=ec2.",
+      "settled_by": "A one-host read without host_metadata, compared with the probe: whether CLOUD_RESOURCE_ID is present in each."
+    },
+    {
+      "id": "ignored-disabled-default",
+      "question": "Are ignored and disabled detections left out when include_ignored and include_disabled are omitted?",
+      "assumption": "They are left out, so every detection read asks for both.",
+      "settled_by": "When the detection page holds an ignored or disabled detection, the same page read again without both parameters: whether those detections are still returned."
+    },
+    {
+      "id": "unique-vuln-id-collision",
+      "question": "Is one UNIQUE_VULN_ID ever seen under two QIDs?",
+      "assumption": "Never; a detection is keyed by host, QID and unique vulnerability id together, so a collision would still be stored apart.",
+      "settled_by": "Every detection on the recorded pages, grouped by UNIQUE_VULN_ID."
+    },
+    {
+      "id": "kb-409-meaning",
+      "question": "Can a knowledge-base 409 carry a code other than 1960 or 1965?",
+      "assumption": "It can, and is then an error, never a wait, because such a 409 has been reported to mean a missing permission.",
+      "settled_by": "Any 409 from the knowledge base, by its SIMPLE_RETURN code."
+    },
+    {
+      "id": "concurrency-header-spelling",
+      "question": "Which spelling of the concurrency headers does Qualys return?",
+      "assumption": "Either X-Concurrency-Limit-* or X-ConcurrencyLimit-*; both are read, case-insensitively.",
+      "settled_by": "The response headers of every recorded response."
+    },
+    {
+      "id": "dtd-unauthenticated",
+      "question": "Are the API DTDs served without a credential?",
+      "assumption": "They are not, so the scheduled drift check falls back to the DTD reference's version and hash.",
+      "settled_by": "Each DTD asked for by a client with no credential: a DTD body means served, a 401 or 403 means not."
+    },
+    {
+      "id": "eos-warning-shape",
+      "question": "What does an end-of-support warning look like?",
+      "assumption": "It arrives as RESPONSE/WARNING with TEXT naming end of support, end of life or deprecation, and is recorded as API_VERSION_EOS.",
+      "settled_by": "Every RESPONSE/WARNING that is not a next-page link, and any Deprecation or Sunset response header."
+    },
+    {
+      "id": "package-table-variants",
+      "question": "Which package-table header variants appear in result text?",
+      "assumption": "Only the three the parser reads: the plain header, the underscored header, and either after a #table line.",
+      "settled_by": "The RESULTS text of every detection on the page: which header form each package-like table starts with."
+    },
+    {
+      "id": "cloud-provider-tags-shape",
+      "question": "What shape is CLOUD_PROVIDER_TAGS, which the DTD names but does not declare?",
+      "assumption": "Unknown, so it is not read; a recording that shows a shape settles the entry, and the shape is then a spec change.",
+      "settled_by": "The element paths (never the text) under every CLOUD_PROVIDER_TAGS on the detection page."
+    }
+  ]
+}

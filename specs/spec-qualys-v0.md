@@ -70,7 +70,7 @@ Eight consequences shape v0:
 | req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | In Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
 | req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
-| req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
+| req-qualys-observe | [The Observation Command](#the-observation-command) | In Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
 | req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | In Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
 | req-qualys-detection-read | [The Detection Read](#the-detection-read) | In Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
 | req-qualys-subscription-run | [Subscription And Scan Run](#subscription-and-scan-run) | In Development | The subscription node and one scan run per collection, with probe, filter, watermark, scopes not read, counters and warnings |
@@ -144,12 +144,15 @@ How requests leave the plugin. A small client of our own over `requests`. Every 
 - any override of TLS verification, client certificate or proxies, with `trust_env` off so no proxy, CA bundle or netrc credential is taken from the environment;
 - any operation not on the allowlist.
 
-The allowlist is the plugin's one definition of "read", and a change to it is a spec change. In v0 it holds two operations, both GET:
+The allowlist is the plugin's one definition of "read", and a change to it is a spec change. In v0 it holds four operations, all GET:
 
 - `GET /api/6.0/fo/asset/host/vm/detection/` with `action=list`;
-- `GET /api/4.0/fo/knowledge_base/vuln/` with `action=list`.
+- `GET /api/4.0/fo/knowledge_base/vuln/` with `action=list`;
+- `GET /api/6.0/fo/asset/host/vm/detection/dtd/output.dtd` and `GET /api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd`, the two output DTDs, with no parameters at all. The observation command reads them (`req-qualys-observe`); the collector does not.
 
-Each names the parameters it may carry, as pinned values or as free values of a stated shape (digits, a comma-separated id list, an ISO-8601 time). An unnamed parameter is refused. A POST is admitted only for a read Qualys offers in no GET form, added to the list by a spec change (ruled 2026-11-20, Q8a); none is needed in v0.
+A client built with no credential (`ReadOnlyClient.anonymous`) sends no `Authorization` header and may send only the two DTD reads, so the observation command can learn whether Qualys serves them without one. An optional observer on the client sees every response, with the response headers minus `Set-Cookie` and only the names of the request headers, so the observation command can record it.
+
+The two list operations each name the parameters they may carry, as pinned values or as free values of a stated shape (digits, a comma-separated id list, an ISO-8601 time). An unnamed parameter is refused. A POST is admitted only for a read Qualys offers in no GET form, added to the list by a spec change (ruled 2026-11-20, Q8a); none is needed in v0.
 
 Authentication is HTTP Basic with the `X-Requested-With` header Qualys requires. The session-login endpoint (`/api/2.0/fo/session/`) is not on the list, so that path is unreachable. Calls run one at a time, because the standard tier allows 2 concurrent calls per API shared by every integration on the subscription.
 
@@ -251,20 +254,23 @@ No credential is ever placed in CI.
 ----
 RID: `req-qualys-observe`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 A tool for whoever tests against a real subscription. It reads a subscription through the read-only client in a fixed order, records every raw response locally, and reports which entries in the open-assumptions ledger the responses answered. It is not the collector and writes nothing to the grid.
 
 #### Implementation
 
-`tap_plugin/qualys/observe.py`, run as `python -m tap_plugin.qualys.observe --list` to see the envelopes and `--key <key>` to observe one. `--dry-run` prints the plan and sends nothing. The order is:
+`tap_plugin/qualys/observe.py`, run as `python -m tap_plugin.qualys.observe --list` to see the envelopes and `--key <key>` to observe one. `--dry-run` prints the plan and sends nothing. It imports nothing from the grid, so it runs without Django. The order is:
 
 1. the probe;
 2. one full detection page with every parameter of `req-qualys-detection-read`;
-3. the knowledge-base records for that page's QIDs;
-4. the two DTDs, when they are served.
+3. the knowledge-base records for that page's QIDs, at most ten requests, no paging followed;
+4. two comparison reads two ledger entries need: one host without `host_metadata` (`cloud-resource-id-without-metadata`), and, only when the page holds an ignored or disabled detection, the same page from its first host id without `include_ignored` and `include_disabled` (`ignored-disabled-default`);
+5. the two DTDs, first by a client with no credential (`dtd-unauthenticated`), then with the credential if that was refused.
 
-A response is saved as one file with its status, the response headers minus any `Set-Cookie`, the names (never the values) of the request headers, and the body. The files go under a private directory in the home directory, outside any repository. The report prints shapes, counts and statuses, never a body, credential, host name, address or account id.
+Every request goes through `ReadOnlyClient` and its allowlist, each bounded by the collector's per-request ceiling. A read that fails is reported as a step outcome, and the reads after it still run, except that a failed probe skips the reads that depend on it.
+
+A response is saved as one file with its status, the response headers minus any `Set-Cookie`, the names (never the values) of the request headers, and the body. The file is a JSON header line, a blank line, then the body exactly as received. The files go under `~/.local/state/qualys-observe/<key>/<UTC time>/`, or under `--out`, refused when the directory is inside a repository. Directories are created owner-only (0700) and files owner-only (0600), never overwriting. The report prints shapes, counts and statuses, never a body, credential, host name, address or account id. It exits 0 when the probe was read, 1 when it was not, and 2 when it could not start.
 
 The open-assumptions ledger is `tap_plugin/qualys/observe_assumptions.json`, with a JSON Schema. Its v0 entries, each settled only by a recording:
 
@@ -281,6 +287,8 @@ The open-assumptions ledger is `tap_plugin/qualys/observe_assumptions.json`, wit
 | `eos-warning-shape` | The shape of an end-of-support warning |
 | `package-table-variants` | Which package-table header variants appear in result text |
 | `cloud-provider-tags-shape` | The shape of `CLOUD_PROVIDER_TAGS`, which the DTD names but does not declare |
+
+Each entry states the question, the assumption the plugin works under today, and which response settles it. The report gives every entry one outcome: settled (a recording agrees with the assumption), contradicted (one disagrees) or not reached (nothing recorded could decide it). A contradicted entry is a spec change to make, citing the recording. A check that itself fails is reported as not reached, never hiding the others.
 
 Recordings are never committed. A fixture is committed only after the operator has reviewed a trimmed copy.
 

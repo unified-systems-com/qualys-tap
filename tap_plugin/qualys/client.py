@@ -3,7 +3,7 @@
 Every request leaves through one ``requests.Session`` subclass whose ``send`` decides what may be sent, so
 remounting an adapter or calling ``Session.request`` directly cannot bypass it, and the client never exposes
 its session. ``send`` refuses, before anything is sent: any method but GET; any URL outside the configured API
-host; any path but the two allowlisted operations; any parameter the operation does not name, or one in the
+host; any path but the allowlisted operations; any parameter the operation does not name, or one in the
 wrong shape; and any per-request override of TLS verification, client certificate or proxies. ``trust_env`` is
 off, so no proxy, CA bundle or netrc credential is taken from the environment. Redirects are never followed;
 a 3xx is an error.
@@ -13,6 +13,11 @@ Authentication is HTTP Basic with the ``X-Requested-With`` header Qualys require
 one request at a time). A 409 waits only for Qualys's throttling codes (1960 concurrency, 1965 rate), honouring
 ``X-RateLimit-ToWait-Sec`` within a bounded count and total time; any other 409 is an error. A body is read
 in chunks and refused past the page ceiling.
+
+Two more reads are on the list for the observation command (req-qualys-observe): the two output DTDs, each a
+GET with no parameters at all. An anonymous client, which holds no credential, may send only those two, so
+the command can ask whether Qualys serves them without one. An optional observer sees every response
+(status, response headers, the names of the request headers, and the body) so the command can record it.
 """
 
 import http.cookiejar
@@ -33,6 +38,10 @@ from tap_plugin.qualys.parse import MAX_PAGE_BYTES
 
 DETECTION_PATH = "/api/6.0/fo/asset/host/vm/detection/"
 KNOWLEDGEBASE_PATH = "/api/4.0/fo/knowledge_base/vuln/"
+DETECTION_DTD_PATH = "/api/6.0/fo/asset/host/vm/detection/dtd/output.dtd"
+KNOWLEDGEBASE_DTD_PATH = "/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd"
+#: Reads that take no parameters at all; the only ones an anonymous client may send.
+PARAMETERLESS = frozenset({DETECTION_DTD_PATH, KNOWLEDGEBASE_DTD_PATH})
 USER_AGENT = "qualys-tap (read-only collector)"
 
 _DIGITS = re.compile(r"[0-9]+")
@@ -78,6 +87,8 @@ ALLOWLIST: dict[str, dict[str, Callable[[str], bool]]] = {
         "ids": _shape(_ID_LIST),
         "last_modified_after": _shape(_ISO_TIME),
     },
+    DETECTION_DTD_PATH: {},
+    KNOWLEDGEBASE_DTD_PATH: {},
 }
 
 #: Qualys's throttling return codes in a 409 body: concurrency and rate (LIM).
@@ -114,6 +125,10 @@ def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
         raise TransportRefused("a URL outside the configured API host is refused")
     if parts.path not in ALLOWLIST:
         raise TransportRefused("a path outside the allowlist is refused")
+    if parts.path in PARAMETERLESS:
+        if parts.query:
+            raise TransportRefused(f"{parts.path} takes no parameters")
+        return parts.path, {}
     pairs = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
     params: dict[str, str] = {}
     rules = ALLOWLIST[parts.path]
@@ -154,7 +169,9 @@ class _GuardedSession(requests.Session):
             raise TransportRefused("a request carrying a cookie is refused")
         if kwargs.get("allow_redirects", True):
             raise TransportRefused("redirects are never followed")
-        check_url(request.url or "", self._root)
+        path, _ = check_url(request.url or "", self._root)
+        if self.auth is None and path not in PARAMETERLESS:
+            raise TransportRefused("an anonymous client may read only the DTDs")
         return super().send(request, **kwargs)
 
 
@@ -168,6 +185,19 @@ class Response:
     headers: dict[str, str] = field(default_factory=dict)
     waits: int = 0
 
+
+@dataclass
+class Exchange:
+    """One response as the observer sees it: never the request headers' values, never a ``Set-Cookie``."""
+
+    url: str
+    status: int
+    response_headers: dict[str, str]
+    request_header_names: list[str]
+    body: bytes
+
+
+Observer = Callable[[Exchange], None]
 
 _RECORDED = re.compile(r"^x-(ratelimit|concurrency-?limit)-", re.I)
 
@@ -184,17 +214,28 @@ class ReadOnlyClient:
         ca_bundle: str | None = None,
         adapter: HTTPAdapter | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        observer: Observer | None = None,
     ) -> None:
         self._root = canonical_api_host(api_host)
         self._verify: bool | str = ca_bundle or True
         self._session = _GuardedSession(self._root, self._verify)
         self._session.auth = (username, password)
+        self._observer = observer
         self._session.headers.update({"X-Requested-With": USER_AGENT, "User-Agent": USER_AGENT})
         if adapter is not None:
             self._session.mount("https://", adapter)
         self._sleep = sleep
         # Calls are serial: one request (and its throttling waits) at a time, whatever the caller's threads do.
         self._lock = threading.Lock()
+
+    @classmethod
+    def anonymous(
+        cls, api_host: str, *, ca_bundle: str | None = None, adapter: HTTPAdapter | None = None, observer: Observer | None = None
+    ) -> ReadOnlyClient:
+        """A client with no credential at all, which may read only the DTDs (req-qualys-observe)."""
+        client = cls(api_host, "", "", ca_bundle=ca_bundle, adapter=adapter, observer=observer)
+        client._session.auth = None
+        return client
 
     def __repr__(self) -> str:
         return f"ReadOnlyClient({self._root})"
@@ -212,8 +253,9 @@ class ReadOnlyClient:
     def _get(self, url: str) -> Response:
         waited = 0.0
         for attempt in range(MAX_RETRIES + 1):
+            prepared = self._session.prepare_request(requests.Request("GET", url))
             raw = self._session.send(
-                self._session.prepare_request(requests.Request("GET", url)),
+                prepared,
                 verify=self._verify,
                 allow_redirects=False,
                 stream=True,
@@ -223,6 +265,14 @@ class ReadOnlyClient:
                 body = self._read(raw)
             finally:
                 raw.close()
+            if self._observer is not None:
+                self._observer(Exchange(
+                    url=url,
+                    status=raw.status_code,
+                    response_headers={k: v for k, v in raw.headers.items() if k.lower() != "set-cookie"},
+                    request_header_names=sorted(prepared.headers.keys()),
+                    body=body,
+                ))
             headers = {k: v for k, v in raw.headers.items() if _RECORDED.match(k)}
             if raw.status_code == 200:
                 return Response(url=url, status=200, body=body, headers=headers, waits=attempt)

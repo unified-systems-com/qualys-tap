@@ -311,8 +311,7 @@ def run_reads(credential: Credential, client: ReadOnlyClient, anonymous: ReadOnl
             if who == "anonymous":
                 obs.dtd_anonymous[name] = 200
             obs.dtd_served[name] = obs.dtd_served.get(name, False) or served
-            if served:
-                break
+            break  # a 200 ends this DTD's reads, a DTD or not: the credential follows only a 401 or 403
     return obs
 
 

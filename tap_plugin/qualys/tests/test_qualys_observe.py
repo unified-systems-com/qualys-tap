@@ -210,6 +210,14 @@ class TestLedger:
         assert len(dtd) == 2 and not any("Authorization" in r.headers for r in dtd)
         assert _ledger_lines(text)["dtd-unauthenticated"][0] == observe.NOT_REACHED
 
+    def test_an_anonymous_200_that_is_not_a_dtd_is_not_retried_with_the_credential(self, secrets: Path, tmp_path: Path) -> None:
+        router = Router(dtd_anonymous=(200, b"<html>not a DTD</html>"))
+        code, text = _run(secrets, tmp_path / "rec", router)
+        assert code == 0
+        dtd = [r for r in router.seen if urlsplit(r.url).path in (DETECTION_DTD_PATH, KNOWLEDGEBASE_DTD_PATH)]
+        assert len(dtd) == 2 and not any("Authorization" in r.headers for r in dtd)
+        assert _ledger_lines(text)["dtd-unauthenticated"][0] == observe.NOT_REACHED
+
     def test_a_failed_probe_still_reports_every_entry(self, secrets: Path, tmp_path: Path) -> None:
         router = Router(probe=(401, b"<html>no</html>"))
         code, text = _run(secrets, tmp_path / "rec", router)

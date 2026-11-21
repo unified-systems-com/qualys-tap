@@ -33,6 +33,8 @@ from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
 from tap_plugin.qualys import neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
+from tap_plugin.qualys.read_kind import COMPLETE, NARROWER, WINDOW
+
 
 def _first_host_id(page: DetectionPage) -> int | None:
     ids = [h.get("host_id") for h in page.hosts]
@@ -67,10 +69,6 @@ def chain_break(pages: list[DetectionPage]) -> str | None:
             return f"detection page {number + 1} is not the page detection page {number} links to"
     return None
 
-
-COMPLETE = "complete"
-WINDOW = "window"
-NARROWER = "narrower"
 
 #: Host fields parsed to UTC beside the string Qualys sent (req-qualys-host).
 _PARSED_TIMES = {

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "observe_assumptions.json: the open-assumptions ledger (req-qualys-observe). Each entry is something this plugin was built on without a recording to check it against, and what a recording would show.",
+  "type": "object",
+  "required": ["description", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "description": {"type": "string", "minLength": 1, "description": "What this file is."},
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per open assumption, in the order the report prints them.",
+      "items": {
+        "type": "object",
+        "required": ["id", "question", "assumption", "settled_by"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "description": "The entry's stable name; the observation command has one check per id."},
+          "question": {"type": "string", "minLength": 1, "description": "What is not known, as a question about what Qualys returns."},
+          "assumption": {"type": "string", "minLength": 1, "description": "What the plugin does today in the absence of a recording. A recording that agrees settles the entry; one that disagrees contradicts it."},
+          "settled_by": {"type": "string", "minLength": 1, "description": "Which response the observation command reads to decide it, and what it looks for."}
+        }
+      }
+    }
+  }
+}

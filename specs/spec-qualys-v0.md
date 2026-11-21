@@ -65,7 +65,7 @@ Eight consequences shape v0:
 
 | RID | Name | Status | Notes |
 | --- | --- | --- | --- |
-| req-qualys-connection | [Connection And Credential](#connection-and-credential) | Approved for Development | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
+| req-qualys-connection | [Connection And Credential](#connection-and-credential) | In Development | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
 | req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | In Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
 | req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | Approved for Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
@@ -100,7 +100,7 @@ Eight consequences shape v0:
 ----
 RID: `req-qualys-connection`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 How the collector knows which Qualys subscription to read and how to authenticate. The settings and the credential live together in one operator-owned secret envelope per subscription, never in a field on a grid node. Whoever can edit a node must not be able to point a credential at another host or quietly narrow what a compliance view sees.
 

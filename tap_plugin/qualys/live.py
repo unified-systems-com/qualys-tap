@@ -163,10 +163,11 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
     try:
         reply = bounded(functools.partial(client.get, detection_url(client.root, scope, the_plan.window_start, limit=1)), "probe")
         probe_page = parse_detection_page(reply.body)
+    # Fixed messages only: nothing a response said, and no exception's own text, reaches the run's record.
     except ReadFailed as exc:
-        raise ProbeFailed(f"the probe was refused (HTTP {exc.status})" if exc.status else f"the probe failed: {exc}") from None
-    except PageRefused as exc:
-        raise ProbeFailed(f"the probe's answer is not a detection document: {exc}") from None
+        raise ProbeFailed(f"the probe was refused (HTTP {exc.status})" if exc.status else "the probe read did not return a usable body") from None
+    except PageRefused:
+        raise ProbeFailed("the probe's answer is not a detection document") from None
     except (TimeoutError, TransportRefused) as exc:
         raise ProbeFailed(f"the probe did not complete ({type(exc).__name__})") from None
     limits = _limits(reply.headers)

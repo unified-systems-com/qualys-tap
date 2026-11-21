@@ -342,6 +342,23 @@ class TestCredentials:
             collector.run()
         assert "NO_CREDENTIAL" in _codes(collector, "error")
 
+    def test_a_refused_envelope_leaks_nothing_into_the_run(self, secrets, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        bad = {"api_host": "http://not-https.example", "subscription": "bad", "username": "u" + PASSWORD, "password": PASSWORD, "ca_bundle": PASSWORD}
+        (tmp_path / "bad.secret.json").write_text(json.dumps({"scope": "qualys", "key": "bad", "kind": "qualys_" + PASSWORD, "description": "t", "data": bad}))
+        (tmp_path / "broken.secret.json").write_text('{"scope": "qualys", "data": {"password": "' + PASSWORD)
+        collector = _collector(monkeypatch, Router())
+        collector.run()
+        assert _codes(collector, "warn").count("CREDENTIAL_REFUSED") == 2
+        assert PASSWORD not in json.dumps(collector.results) and PASSWORD not in collector.summary
+
+    def test_a_probe_failure_records_no_response_text(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        odd = b"<HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>x</DATETIME><HOST_LIST><HOST><DETECTION_LIST><DETECTION><QID>1</QID><TYPE>" + PASSWORD.encode() + b"</TYPE></DETECTION></DETECTION_LIST></HOST></HOST_LIST></RESPONSE></HOST_LIST_VM_DETECTION_OUTPUT>"
+        collector = _collector(monkeypatch, Router(probe=(200, odd, {})))
+        with pytest.raises(QualysCollectorError):
+            collector.run()
+        assert PASSWORD not in json.dumps(collector.results)
+        assert "not a detection document" in json.dumps(collector.results)
+
     def test_self_test_reports_configuration(self, secrets) -> None:
         assert QualysCollector.self_test().summary == "A credential is configured."
 

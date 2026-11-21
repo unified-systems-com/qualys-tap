@@ -4,10 +4,12 @@ All reads go through the models' default managers, which exclude tombstoned rows
 actor (a collector task or the load command binds one).
 """
 
-from collections.abc import Iterable
+import contextlib
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from django.apps import apps
+from django.db import connection, transaction
 from django.forms.models import model_to_dict
 
 from tap_grid.dimension_names import view
@@ -117,3 +119,16 @@ def newest_read_time(key: str) -> Any:
     """
     row = QualysScanRun.objects.filter(subscription_key=key, read_at__isnull=False).order_by("-read_at").first()
     return row.read_at if row else None
+
+
+@contextlib.contextmanager
+def hold_subscription(key: str) -> Iterator[None]:
+    """One transaction holding a per-subscription advisory lock across a run's grid reads and its import.
+
+    The file load and the live collector take the same lock, so two writes to one subscription never both read
+    the held state before either writes.
+    """
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [f"qualys-load:{key}"])
+        yield

@@ -67,12 +67,12 @@ Eight consequences shape v0:
 | --- | --- | --- | --- |
 | req-qualys-connection | [Connection And Credential](#connection-and-credential) | In Development | One operator-owned envelope per subscription: API host, subscription label, Reader credential, optional CA bundle and scope; never fields on a node |
 | req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | In Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
-| req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | Approved for Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
+| req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | In Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
 | req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
 | req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
 | req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | In Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
-| req-qualys-detection-read | [The Detection Read](#the-detection-read) | Approved for Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
+| req-qualys-detection-read | [The Detection Read](#the-detection-read) | In Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
 | req-qualys-subscription-run | [Subscription And Scan Run](#subscription-and-scan-run) | In Development | The subscription node and one scan run per collection, with probe, filter, watermark, scopes not read, counters and warnings |
 | req-qualys-host | [Hosts](#hosts) | In Development | A node per host as Qualys tracks it, with its cloud fields |
 | req-qualys-detection | [Detections](#detections) | In Development | A node per detection keyed by subscription, host id, QID and unique vulnerability id, with Qualys's fields and result text as returned |
@@ -176,7 +176,7 @@ Responses are bounded before parsing: a body over 256 MiB is refused, and so is 
 ----
 RID: `req-qualys-probe`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 Before reading data in earnest, the collector checks that the credential works and the pinned version answers, and records what the subscription says about itself, so a detection can be judged against the read behind it.
 
@@ -334,7 +334,7 @@ QID nodes carry no `state`: they are reference data, not assertions.
 ----
 RID: `req-qualys-detection-read`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 What one run asks Qualys for, and how a run knows where the last one stopped.
 

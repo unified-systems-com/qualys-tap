@@ -203,6 +203,13 @@ class TestLoad:
         with pytest.raises(CommandError, match="in the future"):
             _load(make_archive(tmp_path, pages=[current, future]))
 
+    def test_a_cut_short_knowledge_base_chunk_leaves_qids_unobserved(self, tmp_path: Path) -> None:
+        # The export script does not follow the knowledge base's next-page link (#16): a QID asked and not
+        # returned may be on the page not read, so it is unobserved (kb_returned null), never "not returned".
+        cut = _fixture("kb-documented.xml").replace(b"</RESPONSE>", b"<WARNING><CODE>1980</CODE><TEXT>more</TEXT><URL>https://qualysapi.qg2.apps.qualys.com/api/4.0/fo/knowledge_base/vuln/?action=list&amp;ids=38170</URL></WARNING></RESPONSE>")
+        _load(make_archive(tmp_path, kb=[cut]))
+        assert QualysQid.objects.get(subscription_key=KEY, qid="38170").kb_returned is None
+
     def test_checks_and_import_run_under_the_subscription_hold(self, tmp_path: Path) -> None:
         import contextlib
 

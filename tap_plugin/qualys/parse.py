@@ -54,6 +54,9 @@ class KnowledgeBasePage:
 
     response_datetime: str | None
     vulns: list[dict[str, Any]] = field(default_factory=list)
+    #: The next-page link Qualys returns when it cut the list short (unified-systems-com/qualys-tap#16).
+    next_url: str | None = None
+    warning: dict[str, str | None] | None = None
 
 
 def _load(body: bytes, document: str) -> Element:
@@ -229,7 +232,10 @@ def parse_knowledgebase_page(body: bytes) -> KnowledgeBasePage:
     response = root.find("RESPONSE")
     if response is None:
         raise PageRefused("no RESPONSE element")
+    warning = _warning(response)
     return KnowledgeBasePage(
         response_datetime=_text(response, "DATETIME"),
         vulns=[_vuln(v) for v in response.findall("VULN_LIST/VULN")],
+        next_url=warning["url"] if warning and warning["url"] else None,
+        warning=warning,
     )

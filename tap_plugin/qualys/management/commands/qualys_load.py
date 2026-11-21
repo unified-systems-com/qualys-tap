@@ -4,28 +4,16 @@ Loads an export archive from ``tools/qualys-export`` onto the grid as the collec
 was written, or why nothing was. An archive is accepted or refused whole.
 """
 
-import contextlib
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
-from django.db import connection, transaction
 
 from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
 from tap_grid.grift.importer import grift_import
 from tap_plugin.qualys.load import LoadRefused, load_archive
 from tap_plugin.qualys.models import QualysScanRun
-from tap_plugin.qualys.store import GridStore, newest_read_time
-
-
-@contextlib.contextmanager
-def _hold_subscription(key: str) -> Iterator[None]:
-    """One transaction holding a per-subscription advisory lock across the checks and the import."""
-    with transaction.atomic():
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [f"qualys-load:{key}"])
-        yield
+from tap_plugin.qualys.store import GridStore, hold_subscription, newest_read_time
 
 
 def _already_loaded(key: str, sha256: str) -> bool:
@@ -59,7 +47,7 @@ class Command(BaseCommand):
                     already_loaded=_already_loaded,
                     newest_read_time=newest_read_time,
                     importer=grift_import,
-                    serialize=_hold_subscription,
+                    serialize=hold_subscription,
                 )
             except LoadRefused as exc:
                 raise CommandError(f"refused, nothing written: {exc}") from exc

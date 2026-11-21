@@ -269,6 +269,12 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
     groups = [g for g in neutral.group(run_detections, cves_by_qid) if g.read_this_run]
     held_findings = grid.held_findings(neutral.source_key(key, g.host_id, g.cve) for g in groups)
     groups = [g for g in groups if g.open or neutral.source_key(key, g.host_id, g.cve) in held_findings]
+    # Fail closed: on a host with a detection of unknown CVEs, a finding is never moved to resolved, because that
+    # detection may name its CVE and be open. Open findings are still written; the next whole read settles the rest.
+    unsettled = [g for g in groups if not g.open and g.host_id in hosts_unsure]
+    if unsettled:
+        result.count("findings_not_resolved_unknown_qids", len(unsettled))
+        groups = [g for g in groups if g not in unsettled]
 
     # The shared vulnerability records: every CVE a QID returned this run names, and every CVE a written finding
     # concerns; a held detection's CVE that no written finding concerns is not touched. Where several QIDs name one

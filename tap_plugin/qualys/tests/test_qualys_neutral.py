@@ -109,7 +109,8 @@ class TestStatusFollowsFixed:
     def test_resolved_once_every_one_is_fixed(self) -> None:
         grid = FakeGrid()
         grid.findings = {neutral.source_key(KEY, "1001", "CVE-1")}
-        (finding,) = _of(decompose(_run(), _pages(), _kb(_vuln("38170", "CVE-1")), grid), neutral.FINDING_TYPE)
+        kb = _kb(_vuln("38170", "CVE-1"), _vuln("6666666"), _vuln("11827"), _vuln("45038"))
+        (finding,) = _of(decompose(_run(), _pages(), kb, grid), neutral.FINDING_TYPE)
         assert finding["node"]["status"] == "resolved"
 
     def test_a_fixed_detection_alone_creates_no_finding(self) -> None:
@@ -171,6 +172,30 @@ class TestReviewRound1:
         result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-1")), FakeGrid())
         assert result.authority and {c["read"] for c in result.authority} == {"partial"}
         assert result.counters["hosts_with_unknown_qids"] == 1
+
+    def test_a_held_finding_is_not_resolved_on_a_host_with_unknown_qids(self) -> None:
+        # 38170 (Fixed) names CVE-1 and the finding is held; 11827 on the same host has no CVE list anywhere.
+        grid = FakeGrid()
+        grid.findings = {neutral.source_key(KEY, "1001", "CVE-1")}
+        result = decompose(_run(), _pages(), _kb(_vuln("38170", "CVE-1")), grid)
+        assert _of(result, neutral.FINDING_TYPE) == []
+        assert result.counters["findings_not_resolved_unknown_qids"] == 1
+
+    @staticmethod
+    def _group(*rows: tuple[str | None, ...]) -> neutral.Group:
+        grp = neutral.Group("1001", "CVE-1")
+        for n, (required,) in enumerate(rows):
+            observation = {"ecosystem": "deb", "name": "curl", "installed_version": "7.88.1-10", "required_version": required, "mapping_unambiguous": True}
+            grp.detections.append(neutral.Detection(str(n), str(n), "open", None, None, [observation]))
+        return grp
+
+    def test_a_row_without_a_required_version_never_hides_one(self) -> None:
+        assert self._group((None,), ("7.88.1-11",)).packages() == {("deb", "curl", "7.88.1-10"): "7.88.1-11"}
+
+    def test_disagreeing_required_versions_do_not_depend_on_order(self) -> None:
+        one = self._group(("7.88.1-12",), ("7.88.1-11",)).packages()
+        two = self._group(("7.88.1-11",), ("7.88.1-12",)).packages()
+        assert one == two == {("deb", "curl", "7.88.1-10"): "7.88.1-11"}
 
     def test_an_unrelated_held_cve_is_not_touched(self) -> None:
         grid = FakeGrid()

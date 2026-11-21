@@ -121,15 +121,19 @@ class Group:
         return any(d.ref is not None for d in self.detections)
 
     def packages(self) -> dict[tuple[str, str, str], str | None]:
-        """The packages parsers were sure of across the group, each with the required version a row gave."""
-        out: dict[tuple[str, str, str], str | None] = {}
+        """The packages parsers were sure of across the group, each with the required version its rows gave.
+
+        A row with no required version never hides one another row gave; where rows disagree, the lowest version
+        string is kept, so the result does not depend on the order detections were read in.
+        """
+        versions: dict[tuple[str, str, str], set[str]] = {}
         for detection in self.detections:
             for observation in detection.package_observations or []:
                 key = package_key(observation)
                 if key is not None:
                     required = observation.get("required_version")
-                    out.setdefault(key, required if isinstance(required, str) and required else None)
-        return out
+                    versions.setdefault(key, set()).update([required] if isinstance(required, str) and required else [])
+        return {key: (min(found) if found else None) for key, found in versions.items()}
 
     def carrier(self) -> tuple[str, str, str] | None:
         """The one package carrying the finding; None means the host carries it (ruled Q7b, req-qualys-neutral-3).

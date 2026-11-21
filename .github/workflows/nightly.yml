@@ -11,7 +11,7 @@ permissions:
   contents: read
 jobs:
   nightly:
-    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@7046904b47c021e2040ee06fd634e4dbcbd553a7
+    uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@868aa2afc9c8e609ae3f457806be20d8b878b896
     # Required on this job: GitHub checks every job of the called tree against this grant before
     # starting. security-events: write is plugin-ci's SARIF upload; issues: write is the owner-issue
     # job, the only write in the tree.

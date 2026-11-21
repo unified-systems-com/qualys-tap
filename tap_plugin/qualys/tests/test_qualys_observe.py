@@ -90,7 +90,8 @@ class Router(HTTPAdapter):
             return self.overrides.get("kb", (200, _fixture("kb-documented.xml")))
         if parts.path in (DETECTION_DTD_PATH, KNOWLEDGEBASE_DTD_PATH):
             if not authenticated:
-                return self.overrides.get("dtd_anonymous", (401, b"<html>unauthorized</html>"))
+                # Qualys served both DTDs without a credential on 2026-11-21, so that is the default here.
+                return self.overrides.get("dtd_anonymous", (200, (VENDOR / ("hld-output.dtd" if parts.path == DETECTION_DTD_PATH else "kb-output.dtd")).read_bytes()))
             return 200, (VENDOR / ("hld-output.dtd" if parts.path == DETECTION_DTD_PATH else "kb-output.dtd")).read_bytes()
         return 404, b""
 
@@ -166,13 +167,13 @@ class TestLedger:
         assert lines["unique-vuln-id-collision"] == (observe.CONTRADICTED, "1 id(s) seen under two or more QIDs")
         assert lines["kb-409-meaning"][0] == observe.NOT_REACHED
         assert lines["concurrency-header-spelling"] == (observe.SETTLED, "X-ConcurrencyLimit-*")
-        assert lines["dtd-unauthenticated"] == (observe.SETTLED, "both refused without a credential")
+        assert lines["dtd-unauthenticated"] == (observe.SETTLED, "both served without a credential")
         assert lines["package-table-variants"][0] == observe.SETTLED and "plain" in lines["package-table-variants"][1]
         assert lines["cloud-provider-tags-shape"][0] == observe.NOT_REACHED
 
     def test_contradictions_are_reported(self, secrets: Path, tmp_path: Path) -> None:
         router = Router(
-            dtd_anonymous=(200, (VENDOR / "hld-output.dtd").read_bytes()),
+            dtd_anonymous=(401, b"<html>unauthorized</html>"),
             without_flags=(200, _page()),
             no_metadata=(200, _without(_page(), b"<WARNING>", b"</WARNING>")),
         )
@@ -242,9 +243,9 @@ class TestLedger:
 @pytest.mark.spec("req-qualys-observe-1")
 class TestOnlyAllowlisted:
     def test_every_request_is_an_allowlisted_get(self, secrets: Path, tmp_path: Path) -> None:
-        router = Router()
+        router = Router(dtd_anonymous=(401, b"<html>unauthorized</html>"))  # so the credentialed DTD reads are sent too
         _run(secrets, tmp_path / "rec", router)
-        assert len(router.seen) >= 8
+        assert len(router.seen) >= 9
         for request in router.seen:
             assert request.method == "GET" and request.body is None
             check_url(request.url or "", HOST)

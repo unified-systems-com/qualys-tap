@@ -46,7 +46,7 @@
     {
       "id": "dtd-unauthenticated",
       "question": "Are the API DTDs served without a credential?",
-      "assumption": "They are not, so the scheduled drift check falls back to the DTD reference's version and hash.",
+      "assumption": "They are, on every platform: qualysapi.qualys.com served both without one on 2026-11-21 (drift workflow run 44912955791), and the scheduled drift check fetches them from that host. Other platforms are unchecked; a refusal there means the check does not cover them.",
       "settled_by": "Each DTD asked for by a client with no credential: a DTD body means served, a 401 or 403 means not."
     },
     {

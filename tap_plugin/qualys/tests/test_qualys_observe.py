@@ -179,6 +179,17 @@ class TestLedger:
         assert lines["ignored-disabled-default"][0] == observe.CONTRADICTED
         assert lines["cloud-resource-id-without-metadata"][0] == observe.CONTRADICTED
 
+    def test_no_metadata_read_is_pinned_to_the_probe_host(self, secrets: Path, tmp_path: Path) -> None:
+        router = Router()
+        _run(secrets, tmp_path / "rec", router)
+        pinned = [parse_qs(urlsplit(r.url).query) for r in router.seen if urlsplit(r.url).path == DETECTION_PATH and "host_metadata" not in parse_qs(urlsplit(r.url).query)]
+        assert len(pinned) == 1 and pinned[0]["id_min"] == ["1001"] and pinned[0]["truncation_limit"] == ["1"]
+
+    def test_a_different_host_is_not_compared(self, secrets: Path, tmp_path: Path) -> None:
+        other = _without(_without(_page(), b"<WARNING>", b"</WARNING>"), b"<CLOUD_RESOURCE_ID>", b"</CLOUD_RESOURCE_ID>").replace(b"<ID>1001</ID>", b"<ID>1009</ID>", 1)
+        lines = _ledger_lines(_run(secrets, tmp_path / "rec", Router(no_metadata=(200, other)))[1])
+        assert lines["cloud-resource-id-without-metadata"] == (observe.NOT_REACHED, "the no-metadata read returned a different host from the probe")
+
     def test_kb_409_with_another_code_settles(self, secrets: Path, tmp_path: Path) -> None:
         body = b"<?xml version='1.0'?><SIMPLE_RETURN><RESPONSE><CODE>2003</CODE><TEXT>no</TEXT></RESPONSE></SIMPLE_RETURN>"
         code, text = _run(secrets, tmp_path / "rec", Router(kb=(409, body)))
@@ -260,6 +271,17 @@ class TestLocalAndPrivate:
         assert probe["step"] == "probe" and "Authorization" in probe["request_header_names"]
         assert files[0].read_bytes().partition(b"\n\n")[2] == _without(_page(), b"<WARNING>", b"</WARNING>")
 
+    def test_a_linked_key_directory_is_refused(self, secrets: Path, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        base = tmp_path / "rec"
+        base.mkdir()
+        (base / "acme").symlink_to(repo, target_is_directory=True)
+        router = Router()
+        code, text = _run(secrets, base, router)
+        assert code == 2 and "symbolic link" in text
+        assert router.seen == [] and list(repo.iterdir()) == [repo / ".git"]
+
     def test_refused_inside_a_repository(self, secrets: Path, tmp_path: Path) -> None:
         repo = tmp_path / "repo"
         (repo / ".git").mkdir(parents=True)
@@ -292,7 +314,7 @@ class TestNothingSensitivePrinted:
         assert "Z" * 81 not in text and "owned" in detail
 
     def test_safe(self) -> None:
-        assert observe.safe("a\x00b\x1b[31mc\r\nd​e", 80) == "ab[31mc de"
+        assert observe.safe("a\x00b\x1b[31mc\r\nd\u200be", 80) == "ab[31mc de"
         assert observe.safe("x" * 100, 10) == "x" * 9 + "…"
 
 

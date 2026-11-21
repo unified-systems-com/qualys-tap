@@ -121,9 +121,14 @@ def private_directory(base: Path, key: str, now: datetime) -> Path:
     run = base / key / now.strftime("%Y%m%dT%H%M%SZ")
     for directory in (base, base / key):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # A link below the checked base could point the recordings anywhere, a repository included.
+        if directory.is_symlink() or directory.resolve() != directory:
+            raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked")
         os.chmod(directory, 0o700)
     run.mkdir(mode=0o700)
     os.chmod(run, 0o700)
+    if run.resolve() != run or _inside_repository(run.resolve()):
+        raise ObserveError("the recording directory is inside a repository; recordings are never committed")
     return run
 
 
@@ -256,8 +261,11 @@ def run_reads(credential: Credential, client: ReadOnlyClient, anonymous: ReadOnl
             obs.kb_pages.append(kb)
             obs.steps.append(Step(step, "HTTP 200", f"{len(kb.vulns)} of {len(chunk)} QID(s) returned"))
 
-    if obs.probe is not None:
-        obs.no_metadata = _read_detection(obs, get, live.detection_url(root, scope, None, limit=1, omit=frozenset({"host_metadata"})), "no-metadata")
+    # The same host as the probe, pinned by its id, so the comparison is never between two hosts.
+    probe_host = str(obs.probe.hosts[0]["host_id"]) if obs.probe is not None and obs.probe.hosts else ""
+    if probe_host.isdigit():
+        url = live.detection_url(root, scope, None, limit=1, id_min=probe_host, omit=frozenset({"host_metadata"}))
+        obs.no_metadata = _read_detection(obs, get, url, "no-metadata")
     if obs.page is not None and obs.page.hosts and (flagged := _flagged(obs.page)):
         obs.flagged = flagged
         first = str(obs.page.hosts[0]["host_id"])
@@ -330,6 +338,8 @@ def check_ec2_account_attribute(obs: Observation, recorder: Recorder) -> tuple[s
 def check_cloud_resource_id_without_metadata(obs: Observation, recorder: Recorder) -> tuple[str, str]:
     if not (obs.probe and obs.probe.hosts and obs.no_metadata and obs.no_metadata.hosts):
         return NOT_REACHED, "the probe or the no-metadata read returned no host"
+    if obs.probe.hosts[0].get("host_id") != obs.no_metadata.hosts[0].get("host_id"):
+        return NOT_REACHED, "the no-metadata read returned a different host from the probe"
     with_meta = obs.probe.hosts[0].get("cloud_resource_id") is not None
     without = obs.no_metadata.hosts[0].get("cloud_resource_id") is not None
     if without:

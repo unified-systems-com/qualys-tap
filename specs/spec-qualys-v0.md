@@ -265,12 +265,12 @@ A tool for whoever tests against a real subscription. It reads a subscription th
 1. the probe;
 2. one full detection page with every parameter of `req-qualys-detection-read`;
 3. the knowledge-base records for that page's QIDs, at most ten requests, no paging followed;
-4. two comparison reads two ledger entries need: one host without `host_metadata` (`cloud-resource-id-without-metadata`), and, only when the page holds an ignored or disabled detection, the same page from its first host id without `include_ignored` and `include_disabled` (`ignored-disabled-default`);
+4. two comparison reads two ledger entries need: the probe's host again, pinned by its id, without `host_metadata` (`cloud-resource-id-without-metadata`; a different host returned is not compared), and, only when the page holds an ignored or disabled detection, the same page from its first host id without `include_ignored` and `include_disabled` (`ignored-disabled-default`);
 5. the two DTDs, first by a client with no credential (`dtd-unauthenticated`), then with the credential if that was refused.
 
 Every request goes through `ReadOnlyClient` and its allowlist, each bounded by the collector's per-request ceiling. A read that fails is reported as a step outcome, and the reads after it still run, except that a failed probe skips the reads that depend on it.
 
-A response is saved as one file with its status, the response headers minus any `Set-Cookie`, the names (never the values) of the request headers, and the body. The file is a JSON header line, a blank line, then the body exactly as received. The files go under `~/.local/state/qualys-observe/<key>/<UTC time>/`, or under `--out`, refused when the directory is inside a repository. Directories are created owner-only (0700) and files owner-only (0600), never overwriting. The report prints shapes, counts and statuses, never a body, credential, host name, address or account id. It exits 0 when the probe was read, 1 when it was not, and 2 when it could not start.
+A response is saved as one file with its status, the response headers minus any `Set-Cookie`, the names (never the values) of the request headers, and the body. The file is a JSON header line, a blank line, then the body exactly as received. The files go under `~/.local/state/qualys-observe/<key>/<UTC time>/`, or under `--out`, refused when the directory is inside a repository or any directory below the checked base is a symbolic link. Directories are created owner-only (0700) and files owner-only (0600), never overwriting. The report prints shapes, counts and statuses, never a body, credential, host name, address or account id. It exits 0 when the probe was read, 1 when it was not, and 2 when it could not start.
 
 The open-assumptions ledger is `tap_plugin/qualys/observe_assumptions.json`, with a JSON Schema. Its v0 entries, each settled only by a recording:
 

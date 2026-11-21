@@ -127,6 +127,13 @@ def private_directory(base: Path, key: str, now: datetime) -> Path:
             raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked")
         if created:  # an existing directory keeps its mode; the run directory below is what is owner-only
             os.chmod(directory, 0o700)
+        # Whoever can write to a parent of the run directory can swap it for a link between these checks and the
+        # writes, so a directory others may write to, or a key directory someone else owns, is refused.
+        info = directory.stat()
+        if info.st_mode & 0o022:
+            raise ObserveError("a recording directory is writable by others; recordings are written only where checked")
+        if directory != base and info.st_uid != os.getuid():
+            raise ObserveError("the key directory belongs to another user; recordings are written only where checked")
     # Two observations of one key in the same second get distinct directories, never a shared one.
     for suffix in ("", *(f"-{n}" for n in range(2, 10))):
         run = base / key / f"{stamp}{suffix}"
@@ -295,6 +302,9 @@ def run_reads(credential: Credential, client: ReadOnlyClient, anonymous: ReadOnl
                 obs.steps.append(Step(step, _failure(exc)))
                 if who == "anonymous":
                     obs.dtd_anonymous[name] = exc.status if isinstance(exc, ReadFailed) else None
+                    # Only a refusal is answered with the credential; any other failure leaves the DTD unread.
+                    if not (isinstance(exc, ReadFailed) and exc.status in (401, 403)):
+                        break
                 continue
             served = b"<!ELEMENT" in body[:1 << 20]
             obs.steps.append(Step(step, "HTTP 200", f"{len(body)} bytes, {'a DTD' if served else 'not a DTD'}"))

@@ -202,6 +202,14 @@ class TestLedger:
         lines = _ledger_lines(_run(secrets, tmp_path / "rec", Router(kb=(500, b"<html>down</html>")))[1])
         assert lines["subscription-identity"] == (observe.NOT_REACHED, "no knowledge-base response was read")
 
+    def test_an_anonymous_failure_that_is_not_a_refusal_is_not_retried_with_the_credential(self, secrets: Path, tmp_path: Path) -> None:
+        router = Router(dtd_anonymous=(500, b"<html>down</html>"))
+        code, text = _run(secrets, tmp_path / "rec", router)
+        assert code == 0
+        dtd = [r for r in router.seen if urlsplit(r.url).path in (DETECTION_DTD_PATH, KNOWLEDGEBASE_DTD_PATH)]
+        assert len(dtd) == 2 and not any("Authorization" in r.headers for r in dtd)
+        assert _ledger_lines(text)["dtd-unauthenticated"][0] == observe.NOT_REACHED
+
     def test_a_failed_probe_still_reports_every_entry(self, secrets: Path, tmp_path: Path) -> None:
         router = Router(probe=(401, b"<html>no</html>"))
         code, text = _run(secrets, tmp_path / "rec", router)
@@ -312,6 +320,19 @@ class TestLocalAndPrivate:
         run = observe.private_directory(base, "acme", datetime(2026, 11, 21, 6, 0, tzinfo=UTC))
         assert stat.S_IMODE(base.stat().st_mode) == 0o755
         assert stat.S_IMODE((base / "acme").stat().st_mode) == 0o700 and stat.S_IMODE(run.stat().st_mode) == 0o700
+
+    def test_a_directory_others_may_write_to_is_refused(self, tmp_path: Path) -> None:
+        from datetime import UTC, datetime
+
+        now = datetime(2026, 11, 21, 6, 0, tzinfo=UTC)
+        for shared in (tmp_path / "a", tmp_path / "b" / "acme"):
+            shared.mkdir(parents=True)
+            os.chmod(shared, 0o777)
+        for base in (tmp_path / "a", tmp_path / "b"):
+            with pytest.raises(observe.ObserveError, match="writable by others"):
+                observe.private_directory(base, "acme", now)
+        assert not (tmp_path / "a" / "acme").exists() or not any((tmp_path / "a" / "acme").iterdir())
+        assert not any((tmp_path / "b" / "acme").iterdir())
 
     def test_same_second_observations_get_their_own_directories(self, tmp_path: Path) -> None:
         from datetime import UTC, datetime

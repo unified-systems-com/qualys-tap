@@ -210,6 +210,31 @@ class TestLoad:
         _load(make_archive(tmp_path, kb=[cut]))
         assert QualysQid.objects.get(subscription_key=KEY, qid="38170").kb_returned is None
 
+    def test_a_followed_chunk_is_complete(self, tmp_path: Path) -> None:
+        # Version 3 asks again for what a cut-short chunk left out (#16): the link on page 1 is answered by
+        # kb-aa-02.xml, so a QID asked and returned by neither page is "not returned", not unobserved.
+        cut = _fixture("kb-documented.xml").replace(b"</RESPONSE>", b"<WARNING><CODE>1980</CODE><TEXT>more</TEXT><URL>https://qualysapi.qg2.apps.qualys.com/api/4.0/fo/knowledge_base/vuln/?action=list&amp;ids=38170</URL></WARNING></RESPONSE>")
+        archive = make_archive(tmp_path, kb=[cut], extra={"kb-aa-02.xml": _fixture("kb-documented.xml")}, manifest={"script_version": 3, "knowledgebase_files": 2})
+        _load(archive)
+        assert QualysQid.objects.get(subscription_key=KEY, qid="6666666").kb_returned is True
+        assert QualysQid.objects.get(subscription_key=KEY, qid="38170").kb_returned is False
+
+    def test_a_chunk_whose_last_page_links_onward_is_unobserved(self, tmp_path: Path) -> None:
+        cut = _fixture("kb-documented.xml").replace(b"</RESPONSE>", b"<WARNING><CODE>1980</CODE><TEXT>more</TEXT><URL>https://qualysapi.qg2.apps.qualys.com/api/4.0/fo/knowledge_base/vuln/?action=list&amp;ids=38170</URL></WARNING></RESPONSE>")
+        _load(make_archive(tmp_path, kb=[_fixture("kb-documented.xml")], extra={"kb-aa-02.xml": cut}, manifest={"script_version": 3, "knowledgebase_files": 2}))
+        assert QualysQid.objects.get(subscription_key=KEY, qid="38170").kb_returned is None
+
+    @pytest.mark.parametrize(
+        ("extra", "version", "match"),
+        [
+            ({"kb-aa-03.xml": b"x"}, 3, "not numbered 1..n"),
+            ({"kb-aa-02.xml": b"x"}, 2, "version 2 archive holds a knowledge-base continuation"),
+        ],
+    )
+    def test_continuation_pages_checked(self, tmp_path: Path, extra: dict[str, bytes], version: int, match: str) -> None:
+        with pytest.raises(CommandError, match=match):
+            _load(make_archive(tmp_path, extra=extra, manifest={"script_version": version, "knowledgebase_files": 2}))
+
     def test_checks_and_import_run_under_the_subscription_hold(self, tmp_path: Path) -> None:
         import contextlib
 

@@ -128,9 +128,31 @@ KB_COMPLETE=true
 if [ -s qids.txt ]; then
   split -l 500 qids.txt qchunk-
   for c in qchunk-*; do
-    get "$API/api/4.0/fo/knowledge_base/vuln/?action=list&details=All&show_disabled_flag=1&ids=$(paste -sd, "$c")" "kb-${c#qchunk-}.xml" \
-      || { KB_COMPLETE=false; rm -f "kb-${c#qchunk-}.xml" "kb-${c#qchunk-}.xml.headers"
-           echo "knowledge-base read failed; continuing without it" >&2; }
+    # A chunk Qualys cuts short (RESPONSE/WARNING/URL) is not followed by its link: the QIDs it has not yet
+    # returned are asked again by id, so every request is one this script built. Further pages are saved as
+    # kb-<chunk>-02.xml, -03.xml, ... A page that returns none of what was asked stops the chunk incomplete.
+    ids=$(paste -sd, "$c"); p=1; f="kb-${c#qchunk-}.xml"
+    while :; do
+      if ! get "$API/api/4.0/fo/knowledge_base/vuln/?action=list&details=All&show_disabled_flag=1&ids=$ids" "$f"; then
+        KB_COMPLETE=false; rm -f "$f" "$f.headers"
+        echo "knowledge-base read failed; continuing without it" >&2; break
+      fi
+      left=$(python3 -I -c '
+import sys, xml.etree.ElementTree as E
+root = E.parse(sys.argv[1]).getroot()
+if root.find("RESPONSE/WARNING/URL") is None:
+    sys.exit()  # whole: nothing more to ask
+returned = {q.text.strip() for q in root.findall("RESPONSE/VULN_LIST/VULN/QID") if q.text}  # only the QID of each returned VULN, as the loader reads it
+asked = sys.argv[2].split(",")
+left = [q for q in asked if q not in returned]
+print(",".join(left) if len(left) < len(asked) else "NO-PROGRESS")
+' "$f" "$ids")
+      [ -z "$left" ] && break
+      if [ "$left" = NO-PROGRESS ] || [ "$p" -ge 50 ]; then
+        KB_COMPLETE=false; echo "knowledge-base chunk ${c#qchunk-} was cut short and could not be finished" >&2; break
+      fi
+      p=$((p+1)); ids=$left; f=$(printf 'kb-%s-%02d.xml' "${c#qchunk-}" "$p")
+    done
   done
   rm -f qchunk-*
 else
@@ -151,7 +173,7 @@ python3 -I - "$API" "$SCOPE_OUT" "$KB_COMPLETE" <<'PY'
 import datetime, glob, json, sys
 json.dump({
     "description": "Qualys TAP export manifest: provenance of the files in this archive",
-    "script_version": 2,
+    "script_version": 3,
     "api_host": sys.argv[1],
     "scope": json.loads(sys.argv[2])["scope"],
     "created_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

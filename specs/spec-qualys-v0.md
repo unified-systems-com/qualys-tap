@@ -69,7 +69,7 @@ Eight consequences shape v0:
 | req-qualys-transport | [The Read-Only Transport](#the-read-only-transport) | In Development | One `send` that admits only enumerated read operations, bound to the API host; serial calls; 409 classified by code; bounded input; `defusedxml` |
 | req-qualys-probe | [Probe And Provenance](#probe-and-provenance) | In Development | A one-host first page confirms the credential and version; rate-limit headers and end-of-support text recorded on the run |
 | req-qualys-contract-extract | [Contract Extract And Offline Tests](#contract-extract-and-offline-tests) | In Development | A generated extract of the DTD elements read, tests with no network, every response checked before any node is written |
-| req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | Approved for Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
+| req-qualys-drift-ci | [Scheduled Drift Check](#scheduled-drift-check) | In Development | A scheduled read-only workflow compares the DTDs Qualys serves with the extract and fails on drift in what is read |
 | req-qualys-observe | [The Observation Command](#the-observation-command) | Approved for Development | A read-only command that records what a subscription returns, locally and privately, and settles the open-assumptions ledger |
 | req-qualys-states | [Three States And Resolution](#three-states-and-resolution) | In Development | Not read is never clean; null is unobserved; only Qualys's Fixed resolves; re-opened reopens; an unreported host is withdrawn, its detections untouched |
 | req-qualys-detection-read | [The Detection Read](#the-detection-read) | In Development | Complete first read, then a `vm_processed_after` window; all four statuses; ignored and disabled included; filter and watermark recorded |
@@ -225,7 +225,7 @@ Every response is checked against the extract before any node is written. A requ
 ----
 RID: `req-qualys-drift-ci`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 A scheduled workflow compares the DTDs Qualys serves with the committed sources, reduces both with the same reducer, and fails when what the plugin reads has changed.
 

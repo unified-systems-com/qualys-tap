@@ -80,9 +80,9 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
     """
     qualified = envelope.qualified
     if envelope.scope != SCOPE:
-        raise CredentialError(qualified, f"scope is {envelope.scope!r}, expected {SCOPE!r}")
+        raise CredentialError(qualified, f"the envelope's scope is not {SCOPE!r}")
     if envelope.kind != KIND:
-        raise CredentialError(qualified, f"kind is {envelope.kind!r}, expected {KIND!r}")
+        raise CredentialError(qualified, f"the envelope's kind is not {KIND!r}")
     data = dict(envelope.data)
     try:
         jsonschema.validate(data, _schema())

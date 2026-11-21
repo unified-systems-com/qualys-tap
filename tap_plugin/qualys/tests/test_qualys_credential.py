@@ -123,6 +123,11 @@ class TestNeverEchoed:
         _, (error,) = cred.discover(tmp_path)
         assert PASSWORD not in str(error) and USER not in str(error)
 
+    def test_a_wrong_kind_echoes_nothing_from_the_envelope(self, tmp_path: Path) -> None:
+        _write(tmp_path, "acme", _data(), kind="qualys_" + PASSWORD)
+        _, (error,) = cred.discover(tmp_path)
+        assert PASSWORD not in str(error) and "kind" in error.reason
+
     def test_schema_failure_names_no_value(self, tmp_path: Path) -> None:
         _write(tmp_path, "acme", _data(password=PASSWORD * 200))
         _, (error,) = cred.discover(tmp_path)

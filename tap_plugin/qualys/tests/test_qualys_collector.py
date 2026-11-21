@@ -158,7 +158,8 @@ class TestFirstRun:
             assert request.method == "GET" and request.body is None and "Cookie" not in request.headers
             assert PASSWORD not in request.url
             query = parse_qs(urlsplit(request.url).query)
-            if urlsplit(request.url).path == DETECTION_PATH and "id_min" not in query:
+            if urlsplit(request.url).path == DETECTION_PATH:
+                # Every detection page, the onward ones included: each is rebuilt from the run's own parameters.
                 assert query["status"] == ["New,Active,Re-Opened,Fixed"]
                 assert query["include_ignored"] == ["1"] and query["include_disabled"] == ["1"]
 
@@ -166,8 +167,10 @@ class TestFirstRun:
         secrets({"tag_ids": [7, 3]})
         router = Router()
         _collector(monkeypatch, router).run()
-        query = parse_qs(urlsplit(router.seen[0].url).query)
-        assert (query["use_tags"], query["tag_set_by"], query["tag_include_selector"], query["tag_set_include"]) == (["1"], ["id"], ["any"], ["3,7"])
+        for request in router.seen:
+            if urlsplit(request.url).path == DETECTION_PATH:
+                query = parse_qs(urlsplit(request.url).query)
+                assert (query["use_tags"], query["tag_set_by"], query["tag_include_selector"], query["tag_set_include"]) == (["1"], ["id"], ["any"], ["3,7"])
         assert _run_row().applied_filter == {"tag_ids": [3, 7]}
         assert QualysSubscription.objects.get(subscription_key=KEY).standing_scope == {"tag_ids": [3, 7]}
 
@@ -248,6 +251,57 @@ class TestProbe:
 
 
 @pytest.mark.django_db
+class TestReviewRound1:
+    def test_a_probe_timeout_fails_only_its_subscription(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        def slow(call, what):
+            raise TimeoutError(f"{what} did not finish within its ceiling")
+
+        monkeypatch.setattr(qualys_collector, "_bounded", slow)
+        collector = _collector(monkeypatch, Router())
+        with pytest.raises(QualysCollectorError):
+            collector.run()
+        assert "PROBE_FAILED" in _codes(collector, "error") and not QualysScanRun.objects.exists()
+
+    def test_one_subscription_failing_does_not_stop_the_next(self, secrets, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        second = {"api_host": "https://qualysapi.qg3.apps.qualys.com", "subscription": "other", "username": "u", "password": PASSWORD}
+        (tmp_path / "zzz.secret.json").write_text(json.dumps({"scope": "qualys", "key": "zzz", "kind": "qualys_api_credential", "description": "t", "data": second}))
+        real = live.read
+        calls: list[str] = []
+
+        def flaky(client, *a, **k):
+            calls.append(client.root)
+            if client.root.endswith("qg2.apps.qualys.com"):
+                raise RuntimeError("boom " + PASSWORD)
+            return real(client, *a, **k)
+
+        monkeypatch.setattr(live, "read", flaky)
+        collector = _collector(monkeypatch, Router())
+        collector.run()
+        assert len(calls) == 2 and "SUBSCRIPTION_FAILED" in _codes(collector, "error")
+        assert QualysSubscription.objects.filter(subscription_label="other").exists()
+        assert not QualysSubscription.objects.filter(subscription_key=KEY).exists()
+        assert PASSWORD not in json.dumps(collector.results)
+
+    def test_an_onward_link_with_no_id_min_stops_the_walk(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        page = _fixture("hld-ec2-assembled.xml").replace(b"&id_min=1002", b"&something=else")
+        router = Router(page1=(200, page, {}))
+        _collector(monkeypatch, router).run()
+        assert not [r for r in router.seen if "something" in r.url]  # the link itself is never followed
+        assert QualysSubscription.objects.get(subscription_key=KEY).watermark is None
+        assert "TRUNCATED" in [w["code"] for w in _run_row().warnings]
+
+    def test_the_probe_limits_are_kept_beside_the_last(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        probe = (200, _without_warning(_fixture("hld-ec2-assembled.xml")), {"X-RateLimit-Remaining": "300"})
+        _collector(monkeypatch, Router(probe=probe)).run()
+        recorded = _run_row().probe
+        assert recorded["limits"]["X-RateLimit-Remaining"] == "300" and recorded["last_limits"]["X-RateLimit-Remaining"] == "299"
+
+    def test_a_failed_complete_walk_records_no_complete_read(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        _collector(monkeypatch, Router(page2=(500, b"", {}))).run()
+        assert QualysSubscription.objects.get(subscription_key=KEY).last_complete_read_at is None
+
+
+@pytest.mark.django_db
 class TestKnowledgeBase:
     def test_a_cut_short_chunk_is_followed_to_its_end(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
         asked: list[dict[str, list[str]]] = []
@@ -259,7 +313,8 @@ class TestKnowledgeBase:
             return 200, (cut if len(asked) == 1 else body), {}
 
         _collector(monkeypatch, Router(kb=kb)).run()
-        assert len(asked) == 2 and asked[1]["ids"] == ["38170"]
+        # The cut page returned 6666666; the second request re-asks every other QID by id, not by Qualys's link.
+        assert len(asked) == 2 and asked[1]["ids"] == ["11827,38170,45038,82054"] and "details" in asked[1]
 
     def test_a_failed_chunk_leaves_its_qids_unobserved_not_absent(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
         from tap_plugin.qualys.models import QualysQid

@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadFailed, ReadOnlyClient, Response, TransportRefused
 from tap_plugin.qualys.decompose import COMPLETE, WINDOW
@@ -90,11 +90,24 @@ def scope_params(scope: dict[str, list[int]]) -> dict[str, str]:
     return {}
 
 
-def detection_url(root: str, scope: dict[str, list[int]], window_start: datetime | None, limit: int = TRUNCATION_LIMIT) -> str:
+def detection_url(root: str, scope: dict[str, list[int]], window_start: datetime | None, limit: int = TRUNCATION_LIMIT, id_min: str | None = None) -> str:
+    """Every detection request, built here from the run's own parameters; only ``id_min`` ever comes from Qualys."""
     params = {**_BASE, "truncation_limit": str(limit), **scope_params(scope)}
     if window_start is not None:
         params["vm_processed_after"] = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if id_min is not None:
+        params["id_min"] = id_min
     return f"{root}{DETECTION_PATH}?{urlencode(params)}"
+
+
+def next_id_min(next_url: str) -> str | None:
+    """The one value a next-page link contributes: its ``id_min``, when it is a single run of digits.
+
+    The link itself is never followed: a link that dropped a status, the scope or the window would otherwise
+    broaden the read without anything noticing. The next request is rebuilt from the run's own parameters.
+    """
+    values = parse_qs(urlsplit(next_url).query).get("id_min", [])
+    return values[0] if len(values) == 1 and values[0].isdigit() else None
 
 
 def knowledgebase_url(root: str, qids: list[str]) -> str:
@@ -147,13 +160,17 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
     # The probe: an ordinary allowlisted read of one host. A refused credential, a scope Qualys rejects, or a
     # body that is not a detection document ends the run before anything is written (req-qualys-probe-2, -detection-read-5).
     try:
-        reply = bounded(lambda: client.get(detection_url(client.root, scope, the_plan.window_start, limit=1)), "probe")
+        reply = bounded(functools.partial(client.get, detection_url(client.root, scope, the_plan.window_start, limit=1)), "probe")
         probe_page = parse_detection_page(reply.body)
     except ReadFailed as exc:
         raise ProbeFailed(f"the probe was refused (HTTP {exc.status})" if exc.status else f"the probe failed: {exc}") from None
     except PageRefused as exc:
         raise ProbeFailed(f"the probe's answer is not a detection document: {exc}") from None
-    result = LiveRead(the_plan.read_kind, the_plan.window_start, applied, {"detection_api_version": "6.0", "knowledgebase_api_version": "4.0", "limits": _limits(reply.headers)})
+    except (TimeoutError, TransportRefused) as exc:
+        raise ProbeFailed(f"the probe did not complete ({type(exc).__name__})") from None
+    limits = _limits(reply.headers)
+    # The probe's own limits, and the last response's beside them (req-qualys-probe-4): neither overwrites the other.
+    result = LiveRead(the_plan.read_kind, the_plan.window_start, applied, {"detection_api_version": "6.0", "knowledgebase_api_version": "4.0", "limits": limits, "last_limits": limits})
     result.requests = 1
     if (w := _eos(probe_page, "probe")) is not None:
         result.warnings.append(w)
@@ -177,25 +194,34 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             result.detection_pages_not_read.append({"scope": f"detection page {number}", "reason": f"not read: {type(exc).__name__}"})
             break
         result.requests += 1
-        result.probe["limits"] = _limits(reply.headers)
+        result.probe["last_limits"] = _limits(reply.headers)
         if (w := _eos(page, f"detection page {number}")) is not None:
             result.warnings.append(w)
         result.pages.append(page)
-        url = page.next_url
+        if page.next_url is None:
+            url = None
+        elif (id_min := next_id_min(page.next_url)) is None:
+            result.walk_complete = False
+            result.warnings.append({"code": "TRUNCATED", "detail": f"detection page {number} links onward with no usable id_min; the walk stops there"})
+            url = None
+        else:
+            url = detection_url(client.root, scope, the_plan.window_start, id_min=id_min)
 
     # The knowledge base, for every QID the pages named, each chunk followed to its end (unified-systems-com/qualys-tap#16).
     named = sorted({d["qid"] for page in result.pages for host in page.hosts for d in host["detections"] if isinstance(d.get("qid"), str) and d["qid"].isdigit()}, key=int)
     result.knowledgebase_asked = set(named)
     for start in range(0, len(named), KB_CHUNK):
-        kb_url: str | None = knowledgebase_url(client.root, named[start : start + KB_CHUNK])
+        # A chunk Qualys cuts short is not followed by its link: the QIDs it did not return yet are asked again,
+        # by id, so every request is one this run built (unified-systems-com/qualys-tap#16).
+        remaining = named[start : start + KB_CHUNK]
         for _ in range(MAX_KB_PAGES_PER_CHUNK):
-            if kb_url is None:
+            if not remaining:
                 break
             if out_of_time():
                 result.knowledgebase_complete = False
                 break
             try:
-                reply = bounded(functools.partial(client.get, kb_url), "knowledgebase")
+                reply = bounded(functools.partial(client.get, knowledgebase_url(client.root, remaining)), "knowledgebase")
                 kb_page = parse_knowledgebase_page(reply.body)
             except (ReadFailed, TransportRefused, PageRefused, TimeoutError):
                 result.knowledgebase_complete = False
@@ -204,9 +230,12 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             if (w := _eos(kb_page, "knowledge base")) is not None:
                 result.warnings.append(w)
             result.kb_pages.append(kb_page)
-            kb_url = kb_page.next_url
+            returned = {v.get("qid") for v in kb_page.vulns}
+            left = [q for q in remaining if q not in returned]
+            if kb_page.next_url is None or not returned or len(left) == len(remaining):
+                # Whole, or a cut that returned nothing new: what is left was asked and not returned.
+                break
+            remaining = left
         else:
-            result.knowledgebase_complete = False
-        if kb_url is not None:
             result.knowledgebase_complete = False
     return result

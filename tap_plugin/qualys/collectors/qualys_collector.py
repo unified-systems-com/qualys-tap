@@ -31,6 +31,7 @@ _SITE_NEWER_READ = "858b"
 _SITE_NOTHING_WRITTEN = "49c6"
 _SITE_RUN_FINISHED = "1107"
 _SITE_WALK_INCOMPLETE = "6a6b"
+_SITE_SUBSCRIPTION_FAILED = "6a7a"
 
 #: Tests replace this to serve recorded responses; the default is the real transport.
 client_factory = ReadOnlyClient
@@ -84,7 +85,12 @@ class QualysCollector(CollectorBase):
             raise QualysCollectorError("no usable credential")
         written: list[str] = []
         for credential in usable:
-            line = self._collect(credential)
+            try:
+                line = self._collect(credential)
+            except Exception as exc:  # noqa: BLE001 — one subscription's failure must not stop the others
+                # The type only: an exception's text may carry what a response said, and nothing it carries is checked.
+                self.record_error(_SITE_SUBSCRIPTION_FAILED, "SUBSCRIPTION_FAILED", f"{credential.qualified}: the read failed ({type(exc).__name__}); nothing more was written for it.", message_data={"credential": credential.qualified})
+                continue
             if line:
                 written.append(line)
         if not written:

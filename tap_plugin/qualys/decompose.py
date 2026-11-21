@@ -518,7 +518,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     # Withdrawal, and the record of a complete read: only a complete read with nothing partly read counts.
     # A complete read with no read time cannot say when the data was read, so it records no complete read and
     # withdraws nothing; a live run sets read_at to its own start, a file run to Qualys's response time.
-    fully_complete = read_kind == COMPLETE and not result.partly_read_pages and run.read_at is not None
+    fully_complete = read_kind == COMPLETE and not result.partly_read_pages and run.read_at is not None and run.walk_complete is not False
     if fully_complete:
         sub_node["node"]["last_complete_read_at"] = run.read_at.isoformat()
         for host_id, stored in sorted(grid.current_hosts(key).items()):

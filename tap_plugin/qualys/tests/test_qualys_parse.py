@@ -1,7 +1,8 @@
 """Reading detection and knowledge-base pages (req-qualys-contract-extract-3, -5, req-qualys-transport-6).
 
-Fixtures: two of Qualys's documented samples copied verbatim, and one assembled from the DTD for what the
-samples do not show. None is a recording; each file's first comment says which it is.
+Fixtures: two of Qualys's documented samples copied verbatim, one assembled from the DTD for what the
+samples do not show, and one third-party fixture published by another Qualys importer (qualys-tap#43). None is
+a recording; each file's first comment says which it is.
 """
 
 from pathlib import Path
@@ -135,3 +136,51 @@ class TestRefused:
         # Qualys's responses name their DTD by URL; the parser reads the page without fetching it.
         body = b'<?xml version="1.0"?><!DOCTYPE HOST_LIST_VM_DETECTION_OUTPUT SYSTEM "https://example.invalid/output.dtd"><HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE><DATETIME>t</DATETIME></RESPONSE></HOST_LIST_VM_DETECTION_OUTPUT>'
         assert parse_detection_page(body).hosts == []
+
+
+class TestThirdPartyFixture:
+    """A detection page someone else wrote: openctemio/ctis's importer fixture, Apache-2.0 (see NOTICE).
+
+    It is the only public sample found with ASSET_ID, the CLOUD_* fields and QDS together, so it holds the
+    parser to a shape we did not author. It names a 2.0 DTD but carries the newer fields.
+    """
+
+    @pytest.fixture
+    def page(self):
+        return parse_detection_page(_read("hld-third-party-ctis.xml"))
+
+    def test_page_and_next_link(self, page) -> None:
+        assert page.response_datetime == "2025-10-05T08:30:00Z"
+        assert [h["host_id"] for h in page.hosts] == ["100001", "100002"]
+        assert page.warning is not None and page.warning["code"] == "1980"
+        assert page.next_url is not None and page.next_url.endswith("id_min=100003")
+
+    def test_agent_host_with_cloud_fields(self, page) -> None:
+        host = page.hosts[0]
+        assert (host["asset_id"], host["tracking_method"], host["ipv6"]) == ("2000001", "AGENT", "2001:db8::20")
+        assert (host["cloud_provider"], host["cloud_service"], host["cloud_resource_id"]) == ("AWS", "VM", "i-0fedcba9876543210")
+        assert host["ec2_instance_id"] == "i-0fedcba9876543210"
+        assert host["ec2_metadata"] == {"latest/meta-data/placement/availability-zone": "us-east-1a"}
+
+    def test_each_type_and_status(self, page) -> None:
+        by_uvid = {d["unique_vuln_id"]: d for d in page.hosts[0]["detections"]}
+        assert {u: (d["detection_type"], d["status"]) for u, d in by_uvid.items()} == {
+            "9000000001": ("Confirmed", "Re-Opened"),
+            "9000000002": ("Potential", "New"),
+            "9000000003": ("Info", "Active"),
+            "9000000004": ("Confirmed", "Fixed"),
+        }
+        reopened = by_uvid["9000000001"]
+        assert (reopened["qds"], reopened["times_reopened"], reopened["last_fixed_datetime"]) == ("72", "1", "2025-06-01T00:00:00Z")
+        assert reopened["qds_factors"] == [{"name": "CVSS", "value": "5.9"}, {"name": "epss", "value": "0.96"}]
+        assert by_uvid["9000000004"]["last_fixed_datetime"] == "2025-09-15T00:00:00Z"
+
+    def test_absent_is_unobserved(self, page) -> None:
+        # The second host carries none of the optional fields: each reads as None, never as a default.
+        host = page.hosts[1]
+        assert all(host[k] is None for k in ("asset_id", "ipv6", "dns", "cloud_provider", "cloud_resource_id", "ec2_metadata"))
+        (detection,) = host["detections"]
+        assert detection["qds"] is None and detection["qds_factors"] is None
+        # The Info detection carries no dates; they stay unobserved too.
+        info = page.hosts[0]["detections"][2]
+        assert info["first_found_datetime"] is None and info["last_found_datetime"] is None

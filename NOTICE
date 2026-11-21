@@ -1,0 +1,11 @@
+Qualys TAP
+Copyright 2026 George Chamales
+
+This product includes a test fixture from CTIS - CTEM Interchange Schema
+(https://github.com/openctemio/ctis), Copyright 2026 The OpenCTEM Authors,
+licensed under the Apache License, Version 2.0:
+  tap_plugin/qualys/tests/fixtures/hld-third-party-ctis.xml
+  (testdata/importers/qualys/detections.xml at 2dfae0218a307cd5ee87ea5b33e3538a6eb0cd50)
+
+CTIS's NOTICE reads, in part: "This product includes software developed by the
+OpenCTEM project (https://github.com/openctemio)."

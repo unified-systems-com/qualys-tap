@@ -11,6 +11,7 @@ present, empty element is ``""``. Scalar text is stripped of surrounding whitesp
 which is kept exactly (req-qualys-detection-4). Nothing is converted, scaled or mapped.
 """
 
+import io
 import json
 from dataclasses import dataclass, field
 from functools import cache
@@ -25,6 +26,10 @@ from defusedxml import DefusedXmlException
 MAX_PAGE_BYTES = 256 << 20
 #: XML nested deeper than this is refused.
 MAX_DEPTH = 64
+#: Elements per page, counted as they are parsed (unified-systems-com/qualys-tap#15). The byte ceiling alone
+#: lets a shallow page of tiny elements allocate far more than its size suggests; this stops it while parsing.
+#: A full 1,000-host page with about 150 detections a host is roughly 5 million elements.
+MAX_ELEMENTS = 8_000_000
 
 _EXTRACT = Path(__file__).resolve().parent / "contract" / "extract.json"
 
@@ -62,16 +67,37 @@ class KnowledgeBasePage:
 def _load(body: bytes, document: str) -> Element:
     if len(body) > MAX_PAGE_BYTES:
         raise PageRefused(f"page larger than {MAX_PAGE_BYTES} bytes")
-    try:
-        root = SafeET.fromstring(body)
-    except DefusedXmlException as exc:
-        raise PageRefused(f"refused XML construct: {type(exc).__name__}") from exc
-    except SafeET.ParseError as exc:
-        raise PageRefused(f"not well-formed XML: {exc}") from exc
+    root = _bounded_parse(body)
     spec = extract()["documents"][document]
     if root.tag != spec["root"]:
         raise PageRefused(f"root element is {root.tag}, expected {spec['root']}")
     _check(root, spec["elements"], 1)
+    return root
+
+
+def _bounded_parse(body: bytes) -> Element:
+    """Parse incrementally, refusing past the element count or depth as the elements arrive."""
+    root: Element | None = None
+    depth = count = 0
+    try:
+        for event, element in SafeET.iterparse(io.BytesIO(body), events=("start", "end")):
+            if event == "end":
+                depth -= 1
+                continue
+            if root is None:
+                root = element
+            depth += 1
+            count += 1
+            if depth > MAX_DEPTH:
+                raise PageRefused(f"XML nested deeper than {MAX_DEPTH}")
+            if count > MAX_ELEMENTS:
+                raise PageRefused(f"page holds more than {MAX_ELEMENTS} elements")
+    except DefusedXmlException as exc:
+        raise PageRefused(f"refused XML construct: {type(exc).__name__}") from exc
+    except SafeET.ParseError as exc:
+        raise PageRefused(f"not well-formed XML: {exc}") from exc
+    if root is None:
+        raise PageRefused("not well-formed XML: no element")
     return root
 
 

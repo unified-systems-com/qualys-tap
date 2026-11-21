@@ -256,6 +256,12 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
     records = {qid: vulns[qid] for qid in named if qid in vulns}
     records.update(grid.qid_records(key, named - set(records)))
     cves_by_qid = {qid: neutral.cve_ids(record.get("cve_list")) for qid, record in records.items()}
+    # A host with a detection whose QID has no CVE list on record (not returned, or a stub) cannot be grouped
+    # whole: that detection may name a CVE a finding on the host is about. Its claims say partial.
+    unknown = {qid for qid in named if records.get(qid, {}).get("cve_list") is None}
+    hosts_unsure = {h for h, dets in run_detections.items() if any(d.qid in unknown for d in dets)}
+    if hosts_unsure:
+        result.count("hosts_with_unknown_qids", len(hosts_unsure))
     for cves in cves_by_qid.values():
         for cve in cves:
             if not neutral.usable_vuln_id(cve):
@@ -330,7 +336,7 @@ def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str,
         if required:
             concerns["edge"]["properties"] = {"fixed_versions": [required]}
         result.edges.append(concerns)
-        result.authority.append(neutral.authority_claim(key, grp.host_id, grp.cve, complete=whole))
+        result.authority.append(neutral.authority_claim(key, grp.host_id, grp.cve, complete=whole and grp.host_id not in hosts_unsure))
         result.count("neutral_findings")
         result.count("neutral_findings_open" if grp.open else "neutral_findings_resolved")
 

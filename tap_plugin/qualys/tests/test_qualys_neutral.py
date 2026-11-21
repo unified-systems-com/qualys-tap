@@ -145,7 +145,8 @@ class TestCarrier:
         assert carries["from_ref"] == "h1001"
 
     def test_one_authority_claim_per_finding(self) -> None:
-        result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-1", "CVE-2")), FakeGrid())
+        kb = _kb(_vuln("6666666", "CVE-1", "CVE-2"), _vuln("38170"), _vuln("11827"), _vuln("45038"))
+        result = decompose(_run(), _pages(), kb, FakeGrid())
         assert len(result.authority) == 2
         assert {c["anchor"]["key"]["source_key"] for c in result.authority} == {neutral.source_key(KEY, "1001", c) for c in ("CVE-1", "CVE-2")}
         assert all((c["edge_type"], c["direction"], c["read"]) == (neutral.CARRIES, "inbound", "complete") for c in result.authority)
@@ -161,8 +162,15 @@ class TestReviewRound1:
         assert {c["read"] for c in result.authority} == {"partial"}
 
     def test_a_whole_run_claims_complete(self) -> None:
-        result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-1")), FakeGrid())
+        kb = _kb(_vuln("6666666", "CVE-1"), _vuln("38170"), _vuln("11827"), _vuln("45038"))
+        result = decompose(_run(), _pages(), kb, FakeGrid())
         assert {c["read"] for c in result.authority} == {"complete"}
+
+    def test_a_qid_with_no_cve_list_makes_its_host_partial(self) -> None:
+        # 11827 is on the host but the knowledge base did not return it and the grid holds no list for it.
+        result = decompose(_run(), _pages(), _kb(_vuln("6666666", "CVE-1")), FakeGrid())
+        assert result.authority and {c["read"] for c in result.authority} == {"partial"}
+        assert result.counters["hosts_with_unknown_qids"] == 1
 
     def test_an_unrelated_held_cve_is_not_touched(self) -> None:
         grid = FakeGrid()

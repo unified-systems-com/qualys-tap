@@ -78,9 +78,9 @@ Eight consequences shape v0:
 | req-qualys-detection | [Detections](#detections) | In Development | A node per detection keyed by subscription, host id, QID and unique vulnerability id, with Qualys's fields and result text as returned |
 | req-qualys-qid | [Knowledge-Base Records](#knowledge-base-records) | In Development | A node per QID seen, from knowledge base 4.0, with CVSS and the CVE list; linked to each CVE's shared vulnerability record |
 | req-qualys-ec2-link | [EC2 Instance Link](#ec2-instance-link) | In Development | A host links to `aws_core`'s EC2 instance by exact `CLOUD_RESOURCE_ID` with provider AWS, only when it exists; never written; optional dependency |
-| req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | Approved for Development | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
+| req-qualys-neutral | [The Neutral Finding](#the-neutral-finding) | In Development | `compliance_core`'s finding per Qualys host and CVE, carried by the package or the host; vulnerability record created when absent and scored where unscored |
 | req-qualys-parsers | [Result Parsers](#result-parsers) | In Development | A parser registry, four parse states, a fixture and a test each; the first parser reads Qualys's package table |
-| req-qualys-package-link | [Package Link](#package-link) | Approved for Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
+| req-qualys-package-link | [Package Link](#package-link) | In Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
 | req-qualys-file-import | [Export Archive Import](#export-archive-import) | In Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
@@ -528,7 +528,7 @@ For a host whose `CLOUD_PROVIDER` is `AWS` and whose `CLOUD_SERVICE` is `EC2`, t
 ----
 RID: `req-qualys-neutral`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 The shared vulnerability page reads `compliance_core`'s types, not each scanner's. The rule ruled on 2026-11-17 for every scanner applies: a scanner writes the neutral finding beside its own records, may create the shared vulnerability record when it is absent, and uses its own CVSS score where the record has none. Qualys's QID fan-out sets the unit to the host and the CVE, as for Tenable.
 
@@ -599,7 +599,7 @@ Every parser ships with a fixture at `tests/fixtures/<module>.txt` whose first l
 ----
 RID: `req-qualys-package-link`
 
-Status: `Approved for Development`
+Status: `In Development`
 
 A detection reaches the `computing_core` package it concerns only when the parser is sure which one it is.
 

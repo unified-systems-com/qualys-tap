@@ -34,6 +34,30 @@ class FakeGrid:
     def held_qids(self, key: str, qids) -> set[str]:
         return self.qids & set(qids)
 
+    # The neutral reads: what the grid holds of QIDs, detections, shared records, packages and findings.
+    qid_rows: dict[str, dict[str, Any]] = {}
+    detection_rows: dict[str, list[dict[str, Any]]] = {}
+    vulns: dict[str, dict[str, Any]] = {}
+    packages: set[tuple[str, str, str]] = set()
+    findings: set[str] = set()
+
+    def qid_records(self, key: str, qids) -> dict[str, dict[str, Any]]:
+        return {q: r for q, r in self.qid_rows.items() if q in set(qids)}
+
+    def host_detections(self, key: str, host_ids) -> dict[str, list[dict[str, Any]]]:
+        return {h: r for h, r in self.detection_rows.items() if h in set(host_ids)}
+
+    def vulnerabilities(self, vuln_ids) -> dict[str, dict[str, Any]]:
+        return {v: r for v, r in self.vulns.items() if v in set(vuln_ids)}
+
+    def held_packages(self, keys) -> set[tuple[str, str, str]]:
+        return self.packages & set(keys)
+
+    def held_findings(self, source_keys) -> set[str]:
+        return self.findings & set(source_keys)
+
+    def default_dimensions(self, entity_type: str) -> dict[str, str]:
+        return {"compliance_core__compliance_finding": {"compliance": "finding"}, "compliance_core__compliance_vulnerability": {"compliance": "vulnerability"}}.get(entity_type, {"computing": "package"})
     def ec2_instances(self, instance_ids) -> set[str] | None:
         return None if self.ec2 is None else set(self.ec2) & set(instance_ids)
 

@@ -30,7 +30,7 @@ from tap_plugin.qualys.models.host import QualysHost
 from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
-from tap_plugin.qualys import parsers
+from tap_plugin.qualys import neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
 
 COMPLETE = "complete"
@@ -57,6 +57,26 @@ class GridView(Protocol):
         ...
 
     def held_qids(self, key: str, qids: Iterable[str]) -> set[str]: ...
+
+    def qid_records(self, key: str, qids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """The held QIDs' ``cve_list``, ``cvss_v2`` and ``cvss_v3``, for QIDs the knowledge base did not return this run."""
+        ...
+
+    def host_detections(self, key: str, host_ids: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """Every detection the grid holds on these hosts, with what the neutral rules read of it."""
+        ...
+
+    def vulnerabilities(self, vuln_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Held shared records by exact id: ``{"scored": bool, "dimensions": {...}}``."""
+        ...
+
+    def held_packages(self, keys: Iterable[tuple[str, str, str]]) -> set[tuple[str, str, str]]: ...
+
+    def held_findings(self, source_keys: Iterable[str]) -> set[str]:
+        """Which of these neutral finding source keys the grid holds for source ``qualys``."""
+        ...
+
+    def default_dimensions(self, entity_type: str) -> dict[str, str]: ...
 
     def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
         """Of these ids, those ``aws_core`` holds as an EC2 instance's ``instance_id``; None without ``aws_core``."""
@@ -89,6 +109,7 @@ class Result:
     nodes: list[dict[str, Any]] = field(default_factory=list)
     edges: list[dict[str, Any]] = field(default_factory=list)
     counters: dict[str, int] = field(default_factory=dict)
+    authority: list[dict[str, Any]] = field(default_factory=list)
     dropped: list[dict[str, str]] = field(default_factory=list)
     scopes_not_read: list[dict[str, str]] = field(default_factory=list)
     partly_read_pages: int = 0
@@ -220,6 +241,118 @@ def _keyable(value: Any, model: type[dj_models.Model], name: str) -> bool:
     return isinstance(value, str) and value != "" and _fit(model, name, value)[1] is None
 
 
+def _neutral(key: str, grid: GridView, result: Result, run_detections: dict[str, list[neutral.Detection]], host_names: dict[str, str], vulns: dict[str, dict[str, Any]]) -> None:
+    """The neutral findings, the shared vulnerability records and the package links (req-qualys-neutral, -package-link, -qid).
+
+    A finding is computed over every detection the host has, not only this run's: a window read returns only
+    what changed, and a finding is open while ANY detection naming its CVE on that host is open. This run's
+    detections replace the held ones they rewrite. A finding is written only where this run read one of its
+    detections, and created only while one is open; once written it is kept, so it can become resolved.
+    """
+    held_by_host = grid.host_detections(key, run_detections)
+    for host_id in run_detections:
+        merged = {(d.qid, d.unique_vuln_id): d for d in run_detections[host_id]}
+        for row in held_by_host.get(host_id, []):
+            merged.setdefault((row["qid"], row["unique_vuln_id"]), neutral.Detection(
+                row["qid"], row["unique_vuln_id"], row["state"], row.get("severity"), row.get("first_found_datetime"), row.get("package_observations")))
+        run_detections[host_id] = list(merged.values())
+    # Every QID the merged detections name, held ones included: a held open detection keeps its finding open.
+    named = {d.qid for dets in run_detections.values() for d in dets}
+    records = {qid: vulns[qid] for qid in named if qid in vulns}
+    records.update(grid.qid_records(key, named - set(records)))
+    cves_by_qid = {qid: neutral.cve_ids(record.get("cve_list")) for qid, record in records.items()}
+    # A host with a detection whose QID has no CVE list on record (not returned, or a stub) cannot be grouped
+    # whole: that detection may name a CVE a finding on the host is about. Its claims say partial.
+    unknown = {qid for qid in named if records.get(qid, {}).get("cve_list") is None}
+    hosts_unsure = {h for h, dets in run_detections.items() if any(d.qid in unknown for d in dets)}
+    if hosts_unsure:
+        result.count("hosts_with_unknown_qids", len(hosts_unsure))
+    for cves in cves_by_qid.values():
+        for cve in cves:
+            if not neutral.usable_vuln_id(cve):
+                result.count("cve_ids_too_long")
+    groups = [g for g in neutral.group(run_detections, cves_by_qid) if g.read_this_run]
+    held_findings = grid.held_findings(neutral.source_key(key, g.host_id, g.cve) for g in groups)
+    groups = [g for g in groups if g.open or neutral.source_key(key, g.host_id, g.cve) in held_findings]
+    # Fail closed: on a host with a detection of unknown CVEs, a finding is never moved to resolved, because that
+    # detection may name its CVE and be open. Open findings are still written; the next whole read settles the rest.
+    unsettled = [g for g in groups if not g.open and g.host_id in hosts_unsure]
+    if unsettled:
+        result.count("findings_not_resolved_unknown_qids", len(unsettled))
+        groups = [g for g in groups if g not in unsettled]
+
+    # The shared vulnerability records: every CVE a QID returned this run names, and every CVE a written finding
+    # concerns; a held detection's CVE that no written finding concerns is not touched. Where several QIDs name one
+    # CVE, the score comes from the lowest-numbered QID that has one, so the result never depends on read order.
+    in_scope = {cve for qid in cves_by_qid if qid in vulns for cve in cves_by_qid[qid]} | {g.cve for g in groups}
+    scores: dict[str, dict[str, Any]] = {cve: {} for cve in in_scope if neutral.usable_vuln_id(cve)}
+    for qid in sorted(cves_by_qid, key=int):
+        for cve in cves_by_qid[qid]:
+            if cve in scores and not scores[cve]:
+                scores[cve] = neutral.cvss_of(records[qid])
+    held = grid.vulnerabilities(scores)
+    defaults = grid.default_dimensions(neutral.VULNERABILITY_TYPE)
+    for cve in sorted(scores):
+        if cve not in held:
+            result.nodes.append(neutral.vulnerability_node(f"v:{cve}", cve, defaults, scores[cve]))
+            result.count("vulnerabilities_created")
+        elif not held[cve]["scored"] and scores[cve]:
+            # WORKAROUND(unified-systems-com/tap#1172): read, then write. A score another source writes between
+            # this read and the import is replaced; tap has no write that yields to a held value.
+            result.nodes.append(neutral.vulnerability_node(f"v:{cve}", cve, held[cve]["dimensions"], scores[cve]))
+            result.count("vulnerabilities_scored")
+    for qid in sorted(q for q in cves_by_qid if q in vulns):
+        for cve in cves_by_qid[qid]:
+            if neutral.usable_vuln_id(cve):
+                result.edges.append(edge_to_key(f"e-cve-{qid}-{cve}", neutral.ABOUT_VULNERABILITY, f"q{qid}", neutral.VULNERABILITY_TYPE, {"vuln_id": cve}))
+
+    # Packages: a link from each detection read this run to each package a parser was sure of, and every
+    # package a link or a carrier names created with its key fields where the grid holds none.
+    wanted: set[tuple[str, str, str]] = set()
+    for dets in run_detections.values():
+        for d in dets:
+            if d.ref is None:
+                continue
+            for o in d.package_observations or []:
+                if o.get("mapping_unambiguous") is True and neutral.package_key(o) is None:
+                    result.count("package_keys_too_long")
+            for package in {k for o in d.package_observations or [] if (k := neutral.package_key(o))}:
+                wanted.add(package)
+                result.edges.append(edge_to_key(f"e-pkg-{d.ref}-{len(result.edges)}", neutral.FOUND_IN_PACKAGE, d.ref, neutral.PACKAGE_TYPE, neutral.package_ref(package)["key"]))
+                result.count("package_links")
+    wanted.update(c for g in groups if (c := g.carrier()) is not None)
+    package_dims = grid.default_dimensions(neutral.PACKAGE_TYPE)
+    for package in sorted(wanted - grid.held_packages(wanted)):
+        result.nodes.append(neutral.package_node(f"p:{'/'.join(package)}", package, package_dims))
+        result.count("packages_created")
+
+    # The findings, their edges, and one authority claim each so a changed carrier leaves exactly one edge. A run
+    # that skipped an entry, or met a host twice, cannot say it saw every detection behind a finding, so its claims
+    # say partial and propose no removal (req-grid-reconcile-edge-authority: only complete licenses one).
+    finding_dims = grid.default_dimensions(neutral.FINDING_TYPE)
+    whole = not result.partly_read_pages and not result.counters.get("hosts_repeated") and not result.counters.get("detections_unkeyable")
+    for grp in groups:
+        ref = f"n:{grp.host_id}:{grp.cve}"
+        first = min((t for d in grp.detections if (t := parse_time(d.first_found_datetime))), default=None)
+        result.nodes.append(neutral.finding_node(ref, key, host_names.get(grp.host_id, f"host {grp.host_id}"), grp, finding_dims, first))
+        for d in grp.detections:
+            if d.ref is not None:
+                result.edges.append(edge(f"e-det-{d.ref}-{grp.cve}", neutral.DETAILS, d.ref, ref))
+        carrier = grp.carrier()
+        if carrier is None:
+            carries = edge(f"e-car-{ref}", neutral.CARRIES, f"h{grp.host_id}", ref)
+        else:
+            carries = {"entity": {"ref": f"e-car-{ref}", "entity_type": "edge", "name": neutral.CARRIES, "dimensions": {}},
+                       "edge": {"from_key": neutral.package_ref(carrier), "to_ref": ref, "edge_type": neutral.CARRIES, "properties": {}}}
+        result.edges.append(carries)
+        concerns = edge_to_key(f"e-con-{ref}", neutral.CONCERNS, ref, neutral.VULNERABILITY_TYPE, {"vuln_id": grp.cve})
+        required = grp.packages().get(carrier) if carrier is not None else None
+        if required:
+            concerns["edge"]["properties"] = {"fixed_versions": [required]}
+        result.edges.append(concerns)
+        result.authority.append(neutral.authority_claim(key, grp.host_id, grp.cve, complete=whole and grp.host_id not in hosts_unsure))
+        result.count("neutral_findings")
+        result.count("neutral_findings_open" if grp.open else "neutral_findings_resolved")
 def _want_ec2(host_ref: str, host: dict[str, Any], wanted: dict[str, str], result: Result) -> None:
     """Note a host's EC2 instance id when Qualys says it is one (req-qualys-ec2-link-1, -5).
 
@@ -304,6 +437,8 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     seen_hosts: set[str] = set()
     ec2_wanted: dict[str, str] = {}
     seen_detections: set[tuple[str, str, str]] = set()
+    run_detections: dict[str, list[neutral.Detection]] = {}
+    host_names: dict[str, str] = {}
     qids_named: set[str] = set()
     for number, page in enumerate(pages):
         partly = False
@@ -319,6 +454,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             else:
                 seen_hosts.add(host_id)
                 result.nodes.append(_host_node(host_ref, key, host, result))
+                host_names[host_id] = result.nodes[-1]["entity"]["name"]
                 _want_ec2(host_ref, host, ec2_wanted, result)
             for detection in host["detections"]:
                 parts = (host_id, detection.get("qid"), detection.get("unique_vuln_id"))
@@ -332,6 +468,9 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
                 seen_detections.add(parts)
                 ref = "d" + "-".join(parts)
                 result.nodes.append(_detection_node(ref, key, host_id, host.get("os"), detection, result))
+                written = result.nodes[-1]["node"]
+                run_detections.setdefault(host_id, []).append(neutral.Detection(
+                    parts[1], parts[2], written["state"], written.get("severity"), written.get("first_found_datetime"), written["package_observations"], ref))
                 result.edges.append(edge(f"e-on-{ref}", "DETECTED_ON_HOST__qualys", ref, host_ref))
                 result.edges.append(edge_to_key(f"e-qid-{ref}", "ABOUT_QID__qualys", ref, QualysQid.ENTITY_TYPE, {"subscription_key": key, "qid": parts[1]}))
                 qids_named.add(parts[1])
@@ -363,6 +502,8 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         result.scopes_not_read.extend({"scope": f"qid {q}", "reason": "not returned by the knowledge base"} for q in sorted(missing))
     result.count("qids", len(returned))
     result.count("qids_not_returned", len(missing))
+
+    _neutral(key, grid, result, run_detections, host_names, {v["qid"]: v for page in kb_pages for v in page.vulns if v.get("qid") in returned})
 
     # Withdrawal, and the record of a complete read: only a complete read with nothing partly read counts.
     # A complete read with no read time cannot say when the data was read, so it records no complete read and
@@ -417,5 +558,6 @@ def document(result: Result, run: Run) -> dict[str, Any]:
             },
             "nodes": result.nodes,
             "edges": result.edges,
+            **({"edge_cases": {"authority": result.authority}} if result.authority else {}),
         }],
     }

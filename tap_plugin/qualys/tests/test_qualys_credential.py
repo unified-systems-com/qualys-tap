@@ -98,6 +98,12 @@ class TestRefused:
         assert usable == [] and sorted(e.qualified for e in errors) == ["qualys:one", "qualys:two"]
         assert all("qualys:one and qualys:two" in e.reason for e in errors)
 
+    def test_an_unreadable_envelope_is_reported_not_skipped(self, tmp_path: Path) -> None:
+        (tmp_path / "acme.secret.json").write_text('{"scope": "qualys", "key": "acme", "data": {"password": "' + PASSWORD + '"')
+        usable, (error,) = cred.discover(tmp_path)
+        assert usable == [] and error.qualified == "qualys:acme" and "not a readable secret envelope" in error.reason
+        assert PASSWORD not in str(error)
+
     def test_non_latin1_password_refused(self, tmp_path: Path) -> None:
         _write(tmp_path, "acme", _data(password="pāss"))
         _, (error,) = cred.discover(tmp_path)

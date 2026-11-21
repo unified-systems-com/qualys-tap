@@ -121,7 +121,10 @@ def discover(root: Path) -> tuple[list[Credential], list[CredentialError]]:
         try:
             envelope = load_secret_envelope(path)
         except RuntimeSecretError:
-            continue  # not an envelope this plugin can claim; other scopes' files are not ours to report
+            # A file that is not a readable envelope may or may not be ours; it cannot say its scope, so it is
+            # reported by name only, never by content, and never read as "no credential configured".
+            errors.append(CredentialError(f"{SCOPE}:{path.name[: -len(SECRET_SUFFIX)]}", "file is not a readable secret envelope"))
+            continue
         if envelope.scope != SCOPE:
             continue
         try:

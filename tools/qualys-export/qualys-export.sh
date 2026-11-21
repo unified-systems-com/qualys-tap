@@ -142,7 +142,7 @@ import sys, xml.etree.ElementTree as E
 root = E.parse(sys.argv[1]).getroot()
 if root.find("RESPONSE/WARNING/URL") is None:
     sys.exit()  # whole: nothing more to ask
-returned = {q.text.strip() for q in root.iter("QID") if q.text}
+returned = {q.text.strip() for q in root.findall("RESPONSE/VULN_LIST/VULN/QID") if q.text}  # only the QID of each returned VULN, as the loader reads it
 asked = sys.argv[2].split(",")
 left = [q for q in asked if q not in returned]
 print(",".join(left) if len(left) < len(asked) else "NO-PROGRESS")

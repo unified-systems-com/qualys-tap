@@ -130,15 +130,16 @@ def _load_held(archive: Archive, api_host: str, label: str, key: str, sha256: st
         raise LoadRefused(f"a detection page is off-contract: {exc}") from exc
     kb_pages = []
     kb_complete = archive.manifest["knowledgebase_complete"]
-    for body in archive.knowledgebase_files:
+    for body, last in zip(archive.knowledgebase_files, archive.knowledgebase_ends, strict=True):
         try:
             kb_pages.append(parse_knowledgebase_page(body))
         except PageRefused:
             kb_complete = False  # recorded through the QIDs it leaves not returned; the detections still load
             continue
-        if kb_pages[-1].next_url:
-            # A chunk Qualys cut short: the export script does not follow the link (#16), so a QID asked of it and
-            # not returned may simply be on the page not read. It is unobserved, not absent.
+        if kb_pages[-1].next_url and last:
+            # A chunk that still links onward from its last page: the script stopped before Qualys did (#16), so a
+            # QID asked of it and not returned may be on the page not read. It is unobserved, not absent. A link on
+            # an earlier page of the chunk is answered by the page after it.
             kb_complete = False
 
     stamps = [parse_time(p.response_datetime) for p in pages]

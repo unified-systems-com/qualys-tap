@@ -111,49 +111,98 @@ def _inside_repository(path: Path) -> bool:
     return any((p / ".git").exists() for p in (path, *path.parents))
 
 
-def private_directory(base: Path, key: str, now: datetime) -> Path:
-    """A fresh owner-only directory for one observation, refused inside any repository (req-qualys-observe-2)."""
+#: A directory is opened, never followed: a link or a non-directory where one is expected fails the open.
+_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+
+
+@dataclass
+class RunDirectory:
+    """One observation's directory: its path, for the report, and a handle on it, which every write goes through."""
+
+    path: Path
+    fd: int
+
+    def close(self) -> None:
+        os.close(self.fd)
+
+
+def _checked(fd: int, *, own: bool) -> None:
+    info = os.fstat(fd)
+    if info.st_mode & 0o022:
+        raise ObserveError("a recording directory is writable by others; recordings are written only where checked")
+    if own and info.st_uid != os.getuid():
+        raise ObserveError("the key directory belongs to another user; recordings are written only where checked")
+
+
+def _open_child(parent: int, name: str, *, create: bool) -> int:
+    """``name`` below the held ``parent``, created owner-only if absent, opened without following a link."""
+    created = False
+    if create:
+        try:
+            os.mkdir(name, 0o700, dir_fd=parent)
+            created = True
+        except FileExistsError:
+            pass
+    try:
+        fd = os.open(name, _DIRECTORY_FLAGS, dir_fd=parent)
+    except OSError:  # ELOOP for a link, ENOTDIR for anything else
+        raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked") from None
+    try:
+        if created:  # an existing directory keeps its mode; the run directory below is what is owner-only
+            os.fchmod(fd, 0o700)
+        _checked(fd, own=True)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def private_directory(base: Path, key: str, now: datetime) -> RunDirectory:
+    """A fresh owner-only directory for one observation, refused inside any repository (req-qualys-observe-2).
+
+    Each level is opened relative to the one above it and held, and the run directory's handle is what the recorder
+    writes through, so renaming or replacing any directory on the path after its check cannot redirect a recording.
+    """
     if not _KEY.fullmatch(key):
         raise ObserveError("the envelope key is not a plain name")
     base = base.expanduser().resolve()
     if _inside_repository(base):
         raise ObserveError("the recording directory is inside a repository; recordings are never committed")
-    stamp = now.strftime("%Y%m%dT%H%M%SZ")
-    for directory in (base, base / key):
-        created = not directory.exists()
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # A link below the checked base could point the recordings anywhere, a repository included.
-        if directory.is_symlink() or directory.resolve() != directory:
-            raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked")
-        if created:  # an existing directory keeps its mode; the run directory below is what is owner-only
-            os.chmod(directory, 0o700)
-        # Whoever can write to a parent of the run directory can swap it for a link between these checks and the
-        # writes, so a directory others may write to, or a key directory someone else owns, is refused.
-        info = directory.stat()
-        if info.st_mode & 0o022:
-            raise ObserveError("a recording directory is writable by others; recordings are written only where checked")
-        if directory != base and info.st_uid != os.getuid():
-            raise ObserveError("the key directory belongs to another user; recordings are written only where checked")
-    # Two observations of one key in the same second get distinct directories, never a shared one.
-    for suffix in ("", *(f"-{n}" for n in range(2, 10))):
-        run = base / key / f"{stamp}{suffix}"
-        try:
-            run.mkdir(mode=0o700)
-            break
-        except FileExistsError:
-            continue
-    else:
-        raise ObserveError("ten observations of this key started in the same second; try again")
-    os.chmod(run, 0o700)
-    if run.resolve() != run or _inside_repository(run.resolve()):
-        raise ObserveError("the recording directory is inside a repository; recordings are never committed")
-    return run
+    created = not base.exists()
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        base_fd = os.open(base, _DIRECTORY_FLAGS)
+    except OSError:
+        raise ObserveError("a recording directory is a symbolic link; recordings are written only where checked") from None
+    try:
+        if created:
+            os.fchmod(base_fd, 0o700)
+        _checked(base_fd, own=False)
+        key_fd = _open_child(base_fd, key, create=True)
+    finally:
+        os.close(base_fd)
+    try:
+        # Two observations of one key in the same second get distinct directories, never a shared one.
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
+        for name in (stamp, *(f"{stamp}-{n}" for n in range(2, 10))):
+            try:
+                os.mkdir(name, 0o700, dir_fd=key_fd)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise ObserveError("ten observations of this key started in the same second; try again")
+        run = _open_child(key_fd, name, create=False)
+    finally:
+        os.close(key_fd)
+    os.fchmod(run, 0o700)
+    return RunDirectory(base / key / name, run)
 
 
 class Recorder:
     """The client's observer: writes every response to its own owner-only file, and keeps it for the checks."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: RunDirectory) -> None:
         self.directory = directory
         self.exchanges: list[tuple[str, Exchange]] = []
         self.step = "unlabelled"
@@ -168,8 +217,9 @@ class Recorder:
             "request_header_names": exchange.request_header_names,
             "body_not_read": exchange.body_not_read,
         }
-        path = self.directory / f"{len(self.exchanges):02d}-{self.step}.rec"
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        name = f"{len(self.exchanges):02d}-{self.step}.rec"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(name, flags, 0o600, dir_fd=self.directory.fd)
         with os.fdopen(fd, "wb") as handle:
             handle.write(json.dumps(header, sort_keys=True).encode("utf-8") + b"\n\n" + exchange.body)
 
@@ -597,11 +647,14 @@ def main(argv: list[str] | None = None, *, out: TextIO = sys.stdout, adapter: HT
         print(f"{wanted}: {exc}", file=out)
         return 2
     recorder = Recorder(directory)
-    username, password = credential.basic
-    client = ReadOnlyClient(credential.api_host, username, password, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder)
-    anonymous = ReadOnlyClient.anonymous(credential.api_host, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder)
-    obs = run_reads(credential, client, anonymous, recorder)
-    report(credential, directory, obs, recorder, out)
+    try:
+        username, password = credential.basic
+        client = ReadOnlyClient(credential.api_host, username, password, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder)
+        anonymous = ReadOnlyClient.anonymous(credential.api_host, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder)
+        obs = run_reads(credential, client, anonymous, recorder)
+    finally:
+        directory.close()
+    report(credential, directory.path, obs, recorder, out)
     return 0 if obs.probe is not None else 1
 
 

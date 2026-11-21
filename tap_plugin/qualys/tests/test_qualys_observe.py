@@ -24,6 +24,7 @@ from tap_plugin.qualys.client import (
     DETECTION_PATH,
     KNOWLEDGEBASE_DTD_PATH,
     KNOWLEDGEBASE_PATH,
+    Exchange,
     ReadOnlyClient,
     TransportRefused,
     check_url,
@@ -261,6 +262,18 @@ class TestOnlyAllowlisted:
             client.get(f"{HOST}{DETECTION_PATH}?action=list")
         assert router.seen == []
 
+    def test_an_empty_username_or_password_is_not_a_credential(self) -> None:
+        # Built in code with empty values, a client would otherwise carry auth that is not None and pass the guard.
+        for username, password in (("", ""), (USER, ""), ("", PASSWORD)):
+            with pytest.raises(TransportRefused, match="needs a username and a password"):
+                ReadOnlyClient(HOST, username, password, adapter=Router())
+        router = Router()
+        client = ReadOnlyClient(HOST, USER, PASSWORD, adapter=router)
+        client._session.auth = ("", "")
+        with pytest.raises(TransportRefused, match="only the DTDs"):
+            client.get(f"{HOST}{DETECTION_PATH}?action=list")
+        assert router.seen == []
+
     def test_dtd_reads_take_no_parameters(self) -> None:
         with pytest.raises(TransportRefused, match="takes no parameters"):
             check_url(f"{HOST}{DETECTION_DTD_PATH}?x=1", HOST)
@@ -326,8 +339,9 @@ class TestLocalAndPrivate:
         base.mkdir()
         os.chmod(base, 0o755)
         run = observe.private_directory(base, "acme", datetime(2026, 11, 21, 6, 0, tzinfo=UTC))
+        run.close()
         assert stat.S_IMODE(base.stat().st_mode) == 0o755
-        assert stat.S_IMODE((base / "acme").stat().st_mode) == 0o700 and stat.S_IMODE(run.stat().st_mode) == 0o700
+        assert stat.S_IMODE((base / "acme").stat().st_mode) == 0o700 and stat.S_IMODE(run.path.stat().st_mode) == 0o700
 
     def test_a_directory_others_may_write_to_is_refused(self, tmp_path: Path) -> None:
         from datetime import UTC, datetime
@@ -347,9 +361,27 @@ class TestLocalAndPrivate:
 
         now = datetime(2026, 11, 21, 6, 0, tzinfo=UTC)
         runs = [observe.private_directory(tmp_path / "rec", "acme", now) for _ in range(9)]
-        assert len(set(runs)) == 9 and runs[1].name == "20261121T060000Z-2"
+        for run in runs:
+            run.close()
+        assert len({r.path for r in runs}) == 9 and runs[1].path.name == "20261121T060000Z-2"
         with pytest.raises(observe.ObserveError, match="same second"):
             observe.private_directory(tmp_path / "rec", "acme", now)
+
+    def test_recordings_follow_the_held_directory_not_its_path(self, tmp_path: Path) -> None:
+        # Whoever can rename a parent could swap the path after the checks; the writes go through the handle.
+        from datetime import UTC, datetime
+
+        run = observe.private_directory(tmp_path / "rec", "acme", datetime(2026, 11, 21, 6, 0, tzinfo=UTC))
+        moved = tmp_path / "moved"
+        (tmp_path / "rec").rename(moved)
+        decoy = run.path
+        decoy.mkdir(parents=True)
+        recorder = observe.Recorder(run)
+        recorder(Exchange(url=f"{HOST}/x", status=200, response_headers={}, request_header_names=[], body=b"body"))
+        run.close()
+        assert list(decoy.iterdir()) == []
+        (written,) = (moved / "acme" / run.path.name).iterdir()
+        assert written.read_bytes().endswith(b"\n\nbody")
 
     def test_refused_inside_a_repository(self, secrets: Path, tmp_path: Path) -> None:
         repo = tmp_path / "repo"

@@ -170,7 +170,9 @@ class _GuardedSession(requests.Session):
         if kwargs.get("allow_redirects", True):
             raise TransportRefused("redirects are never followed")
         path, _ = check_url(request.url or "", self._root)
-        if self.auth is None and path not in PARAMETERLESS:
+        # Only a username and a password, both present, make a credentialed client; anything less reads as anonymous.
+        credentialed = isinstance(self.auth, tuple) and len(self.auth) == 2 and all(self.auth)
+        if not credentialed and path not in PARAMETERLESS:
             raise TransportRefused("an anonymous client may read only the DTDs")
         return super().send(request, **kwargs)
 
@@ -218,11 +220,14 @@ class ReadOnlyClient:
         adapter: HTTPAdapter | None = None,
         sleep: Callable[[float], None] = time.sleep,
         observer: Observer | None = None,
+        _anonymous: bool = False,
     ) -> None:
+        if not _anonymous and not (username and password):
+            raise TransportRefused("a credentialed client needs a username and a password; use ReadOnlyClient.anonymous for none")
         self._root = canonical_api_host(api_host)
         self._verify: bool | str = ca_bundle or True
         self._session = _GuardedSession(self._root, self._verify)
-        self._session.auth = (username, password)
+        self._session.auth = None if _anonymous else (username, password)
         self._observer = observer
         self._session.headers.update({"X-Requested-With": USER_AGENT, "User-Agent": USER_AGENT})
         if adapter is not None:
@@ -236,9 +241,7 @@ class ReadOnlyClient:
         cls, api_host: str, *, ca_bundle: str | None = None, adapter: HTTPAdapter | None = None, observer: Observer | None = None
     ) -> ReadOnlyClient:
         """A client with no credential at all, which may read only the DTDs (req-qualys-observe)."""
-        client = cls(api_host, "", "", ca_bundle=ca_bundle, adapter=adapter, observer=observer)
-        client._session.auth = None
-        return client
+        return cls(api_host, "", "", ca_bundle=ca_bundle, adapter=adapter, observer=observer, _anonymous=True)
 
     def __repr__(self) -> str:
         return f"ReadOnlyClient({self._root})"

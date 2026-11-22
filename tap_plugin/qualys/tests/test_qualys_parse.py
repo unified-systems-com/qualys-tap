@@ -56,6 +56,7 @@ class TestAssembledShape:
         assert by_qid["38170"]["status"] == "Fixed" and by_qid["38170"]["last_fixed_datetime"] == "2026-11-15T06:00:00Z"
         assert by_qid["11827"]["status"] == "Re-Opened" and by_qid["11827"]["is_ignored"] == "1"
         assert by_qid["6666666"]["qds"] == "57"
+        assert by_qid["6666666"]["qds_severity"] == "MEDIUM"  # unified-systems-com/qualys-tap#51
         assert by_qid["6666666"]["qds_factors"] == [{"name": "CVSS", "value": "8.8"}]
 
     def test_one_unique_vuln_id_under_two_qids(self, page) -> None:
@@ -173,6 +174,7 @@ class TestThirdPartyFixture:
         reopened = by_uvid["9000000001"]
         assert (reopened["qds"], reopened["times_reopened"], reopened["last_fixed_datetime"]) == ("72", "1", "2025-06-01T00:00:00Z")
         assert reopened["qds_factors"] == [{"name": "CVSS", "value": "5.9"}, {"name": "epss", "value": "0.96"}]
+        assert reopened["qds_severity"] == "HIGH"
         assert by_uvid["9000000004"]["last_fixed_datetime"] == "2025-09-15T00:00:00Z"
 
     def test_absent_is_unobserved(self, page) -> None:
@@ -180,7 +182,7 @@ class TestThirdPartyFixture:
         host = page.hosts[1]
         assert all(host[k] is None for k in ("asset_id", "ipv6", "dns", "cloud_provider", "cloud_resource_id", "ec2_metadata"))
         (detection,) = host["detections"]
-        assert detection["qds"] is None and detection["qds_factors"] is None
+        assert detection["qds"] is None and detection["qds_factors"] is None and detection["qds_severity"] is None
         # The Info detection carries no dates; they stay unobserved too.
         info = page.hosts[0]["detections"][2]
         assert info["first_found_datetime"] is None and info["last_found_datetime"] is None

@@ -110,7 +110,7 @@ get() {  # $1=url $2=outfile. GET only, no redirects followed, waits out 409 thr
 }
 
 # 1) Host detections: all four statuses, result text, ignored and disabled included, EC2 metadata.
-URL="$API/api/6.0/fo/asset/host/vm/detection/?action=list&status=New,Active,Re-Opened,Fixed&show_results=1&show_reopened_info=1&include_ignored=1&include_disabled=1&show_asset_id=1&host_metadata=ec2&show_cloud_tags=1&show_qds=1&truncation_limit=1000"
+URL="$API/api/6.0/fo/asset/host/vm/detection/?action=list&status=New,Active,Re-Opened,Fixed&show_results=1&show_reopened_info=1&include_ignored=1&include_disabled=1&show_asset_id=1&host_metadata=ec2&show_cloud_tags=1&show_qds=1&show_qds_factors=1&truncation_limit=1000"
 URL="$URL$SCOPE_QUERY"
 n=1
 while [ -n "$URL" ]; do

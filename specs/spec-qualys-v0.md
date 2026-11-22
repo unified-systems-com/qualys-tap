@@ -352,7 +352,7 @@ What one run asks Qualys for, and how a run knows where the last one stopped.
 
 #### Implementation
 
-Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1` and `show_qds=1`, plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
+Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1`, `show_qds=1` and `show_qds_factors=1` (without it Qualys returns no `QDS_FACTORS`, so `qds_factors` would always be null on a live read; unified-systems-com/qualys-tap#50), plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
 
 The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed, stopped early, ended on a next-page URL it did not follow (`TRUNCATED`), holds pages that are not one unbroken next-page chain (`TRUNCATED`: a page other than the last with no link, or a following page whose first host is below the link's `id_min` or not above the linking page's last host; `unified-systems-com/qualys-tap#19`), hit a size or time ceiling, recorded any detection page in `scopes_not_read`, or read any page only partly (an unkeyable detection, `req-qualys-detection-5`) does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
 
@@ -460,7 +460,7 @@ The node carries, as returned:
 - the detection: `TYPE`, `PORT`, `PROTOCOL`, `FQDN`, `SSL`, `STATUS`, `SEVERITY`;
 - its history: `FIRST_FOUND_DATETIME`, `LAST_FOUND_DATETIME`, `LAST_FIXED_DATETIME`, `LAST_REOPENED_DATETIME`, `TIMES_FOUND`, `TIMES_REOPENED`, `LAST_TEST_DATETIME`, `LAST_UPDATE_DATETIME`, `LAST_PROCESSED_DATETIME`;
 - `IS_IGNORED`, `IS_DISABLED`;
-- `QDS` and its factors;
+- `QDS`, its `severity` attribute (`qds_severity`, unified-systems-com/qualys-tap#51) and its factors;
 - `RESULTS` in full, never truncated into a key or a hash.
 
 It also carries the resolution fields of `req-qualys-states` and, from `req-qualys-parsers`, the parse state, the parser id and version, and the observations.

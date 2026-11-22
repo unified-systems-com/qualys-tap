@@ -527,8 +527,8 @@ class TestReviewRound3:
 
 @pytest.mark.spec("req-qualys-transport-9")
 class TestReviewRound4:
-    """PR #62 round 4 (Codex): no attempt starts and no wait runs past the run's ceiling, so a run overshoots it by
-    at most one attempt, as it did before the ceiling moved inside the retries."""
+    """PR #62 round 4 (Codex): no attempt starts once the run's ceiling has passed and no wait starts that would reach
+    it, so a run overshoots it by at most one attempt, as it did before the ceiling moved inside the retries."""
 
     def test_a_wait_that_would_pass_the_run_ceiling_is_not_slept(self) -> None:
         sleeps: list[float] = []

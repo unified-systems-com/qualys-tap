@@ -138,7 +138,7 @@ class ReadFailed(Exception):
 
 
 class OutOfTime(ReadFailed):
-    """A read the run's own ceiling ended between attempts: no attempt starts, and no wait runs, past it."""
+    """A read the run's own ceiling ended between attempts: no attempt starts past it, and no wait starts that would reach it."""
 
 
 def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
@@ -302,8 +302,9 @@ class ReadOnlyClient:
 
         ``bound``, when given, runs each attempt under the caller's ceiling; the waits between attempts are not
         inside it. A ``TimeoutError`` from it ends the read: the attempt is abandoned, not retried. ``remaining``,
-        when given, is the seconds left on the caller's run: no attempt starts and no wait runs past it, so a run
-        overshoots its ceiling by at most one attempt (PR #62 round 4).
+        when given, is the seconds left on the caller's run: no attempt starts once it has passed, and no wait starts
+        that would reach it, so a run overshoots its ceiling by at most one attempt, plus however late a sleep returns
+        (PR #62 rounds 4 and 5).
         """
         check_url(url, self._root)
         with self._lock:

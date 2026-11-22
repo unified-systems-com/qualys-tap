@@ -234,7 +234,7 @@ A scheduled workflow compares the DTDs Qualys serves with the committed sources,
 
 #### Implementation
 
-`.github/workflows/qualys-drift.yml`, scheduled weekly and on demand, with `contents: read` and no write token: the failing run is the signal, and no issue is opened. It runs `python -m tap_plugin.qualys.contract.drift`, which uses only the standard library, so the workflow installs nothing. It fails on a changed consumed element and lists other changes in the run summary without failing.
+`.github/workflows/qualys-drift.yml`, scheduled weekly and on demand, with `contents: read` and no write token: the failing run is the signal, and no issue is opened. Its `served` job runs `python -m tap_plugin.qualys.contract.drift`, which uses only the standard library, so that job installs nothing. It fails on a changed consumed element and lists other changes in the run summary without failing.
 
 Qualys serves its API DTDs without a credential: fetched from `qualysapi.qualys.com` on 2026-11-21. So the workflow fetches both from the documented DTD paths on that host (`drift served`), with no redirect followed and a size bound. Other platforms are not checked; the ledger entry `dtd-unauthenticated` stays open for them, and the observation command reports it per subscription. Two other modes stay available by hand:
 
@@ -242,6 +242,8 @@ Qualys serves its API DTDs without a credential: fetched from `qualysapi.qualys.
 - `drift file <document> < <path>` compares a DTD on disk, read from standard input; the command takes no path.
 
 The DTDs carried by each export archive are compared at load time through the same function (`req-qualys-file-import`).
+
+A second job, `elastic-fixtures`, holds the parsers to third-party pages (unified-systems-com/qualys-tap#45, ruled Q28a). Elastic's `qualys_vmdr` integration ships a mock Qualys server whose configuration carries 5.0 detection pages and 4.0 knowledge-base pages from three platforms. It is under the Elastic License 2.0, so it is never committed here. `python -m tap_plugin.qualys.contract.elastic` fetches it at a pinned commit, refuses it unless its SHA-256 is the recorded one, and parses every page. The job fails if a page is refused, or if a page yields a different count of hosts, detections or QIDs than recorded. The parser needs `defusedxml`, which the job installs by hash into a throwaway virtual environment, at the same pin as `pyproject.toml`. The suite opens no socket (`req-qualys-contract-extract-2`), so the fetch lives here; the extraction and the expectations are tested offline. Moving the pin is one deliberate change: commit, hash and expectations together.
 
 No credential is ever placed in CI.
 
@@ -253,6 +255,7 @@ No credential is ever placed in CI.
 | req-qualys-drift-ci-2 | Reports Other Changes Without Failing | Proposed | A change outside the consumed set is listed in the run summary and does not fail. | |
 | req-qualys-drift-ci-3 | Read-Only Permissions, No Credential | Proposed | The workflow grants `contents: read` only, opens no issue and uses no Qualys credential. | |
 | req-qualys-drift-ci-4 | DTDs In Hand Are Compared Too | Proposed | The DTDs an export archive or a live run carries are reduced and compared with the extract when they are loaded, and a consumed difference is recorded on the run as `CONTRACT_DRIFT`. | Covers the case where CI cannot reach a DTD. |
+| req-qualys-drift-ci-5 | Third-Party Pages Are Parsed | Proposed | A scheduled job fetches Elastic's `qualys_vmdr` mock configuration at a pinned commit, refuses it unless its SHA-256 matches, and fails if any page is refused or yields other counts than recorded. | unified-systems-com/qualys-tap#45; not vendored (Elastic License 2.0). |
 
 ### The Observation Command
 ----

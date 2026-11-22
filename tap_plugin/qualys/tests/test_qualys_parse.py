@@ -207,3 +207,18 @@ class TestEmptyBody:
         with pytest.raises(PageRefused) as caught:
             parse_detection_page(b"<HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE>")
         assert not isinstance(caught.value, EmptyBody)
+
+    def test_the_size_ceiling_is_checked_before_emptiness(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # PR #64 round 1 (Codex): an over-ceiling body is refused for its size, never scanned for emptiness first.
+        from tap_plugin.qualys import parse as parse_module
+        from tap_plugin.qualys.parse import EmptyBody
+
+        monkeypatch.setattr(parse_module, "MAX_PAGE_BYTES", 8)
+
+        class NoStrip(bytes):
+            def strip(self, *a):  # type: ignore[override]
+                raise AssertionError("an over-ceiling body was scanned")
+
+        with pytest.raises(PageRefused, match="larger than") as caught:
+            parse_detection_page(NoStrip(b" " * 16))
+        assert not isinstance(caught.value, EmptyBody)

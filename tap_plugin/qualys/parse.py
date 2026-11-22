@@ -74,10 +74,10 @@ class KnowledgeBasePage:
 
 
 def _load(body: bytes, document: str) -> Element:
-    if not body.strip():
-        raise EmptyBody("the page is empty")
     if len(body) > MAX_PAGE_BYTES:
         raise PageRefused(f"page larger than {MAX_PAGE_BYTES} bytes")
+    if not body.strip():  # after the size check, so nothing past the ceiling is scanned or copied
+        raise EmptyBody("the page is empty")
     root = _bounded_parse(body)
     spec = extract()["documents"][document]
     if root.tag != spec["root"]:

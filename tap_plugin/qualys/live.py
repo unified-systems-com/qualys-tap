@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import requests
 
 from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadFailed, ReadOnlyClient, Response, TransportRefused
-from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage, PageRefused, parse_detection_page, parse_knowledgebase_page
+from tap_plugin.qualys.parse import DetectionPage, EmptyBody, KnowledgeBasePage, PageRefused, parse_detection_page, parse_knowledgebase_page
 from tap_plugin.qualys.read_kind import COMPLETE, WINDOW
 
 #: How often a complete read is repeated so withdrawal can be judged (req-qualys-detection-read).
@@ -181,6 +181,8 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
     # Fixed messages only: nothing a response said, and no exception's own text, reaches the run's record.
     except ReadFailed as exc:
         raise ProbeFailed(f"the probe was refused (HTTP {exc.status})" if exc.status else "the probe read did not return a usable body") from None
+    except EmptyBody:
+        raise ProbeFailed("the probe's answer was empty") from None
     except PageRefused:
         raise ProbeFailed("the probe's answer is not a detection document") from None
     except (TimeoutError, TransportRefused, requests.RequestException) as exc:

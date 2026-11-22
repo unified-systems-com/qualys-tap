@@ -38,6 +38,15 @@ class PageRefused(ValueError):
     """A page that is not read at all: too large, too deep, not well-formed, hostile, or off-contract."""
 
 
+class EmptyBody(PageRefused):
+    """A page with no content at all, refused under its own name (unified-systems-com/qualys-tap#52, ruled Q30a).
+
+    An empty answer is missing evidence, not evidence of absence: read as a page with no hosts, it would let a
+    complete read withdraw every host held. So it is refused like any other page, and named so an operator can
+    tell it from a malformed one.
+    """
+
+
 @cache
 def extract() -> dict[str, Any]:
     return json.loads(_EXTRACT.read_text(encoding="utf-8"))
@@ -65,6 +74,8 @@ class KnowledgeBasePage:
 
 
 def _load(body: bytes, document: str) -> Element:
+    if not body.strip():
+        raise EmptyBody("the page is empty")
     if len(body) > MAX_PAGE_BYTES:
         raise PageRefused(f"page larger than {MAX_PAGE_BYTES} bytes")
     root = _bounded_parse(body)

@@ -424,3 +424,34 @@ class TestCeilingBoundsAttemptsNotWaits:
             client.get(DETECTION, bound=timed_out)
         assert adapter.seen == [] and client._session is not before
         assert client.get(DETECTION).status == 200  # the new session works, and the lock was released
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound1:
+    """PR #62 round 1 (Codex, Grok): TLS and proxy failures are not transient; a replaced session has its own pool."""
+
+    @pytest.mark.parametrize("error", [requests.exceptions.SSLError("certificate verify failed"), requests.exceptions.ProxyError("proxy refused")])
+    def test_a_tls_or_proxy_failure_is_not_retried(self, error: Exception) -> None:
+        assert isinstance(error, requests.ConnectionError)  # why it needs excluding by name
+        sleeps: list[float] = []
+        adapter = Raising(error, (200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=sleeps.append)
+        with pytest.raises(type(error)):
+            client.get(DETECTION)
+        assert len(adapter.seen) == 1 and sleeps == []
+
+    def test_a_replaced_session_does_not_share_the_abandoned_pool(self) -> None:
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", sleep=lambda s: None)  # no injected adapter: production
+        before = client._session.adapters["https://"]
+
+        def timed_out(attempt):
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=timed_out)
+        assert client._session.adapters["https://"] is not before
+
+    def test_the_collector_ceiling_is_a_timeout_error(self) -> None:
+        from tap_cares.collectors import CeilingExceeded
+
+        assert issubclass(CeilingExceeded, TimeoutError)  # so the swap runs when observe's run_with_ceiling raises it

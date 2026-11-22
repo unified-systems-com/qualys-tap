@@ -112,8 +112,11 @@ DEFAULT_WAIT_SECONDS = 60
 CONCURRENCY_WAIT_FLOOR_SECONDS = 30.0
 #: Answers worth asking again: too many requests, and the server-side failures a retry can outlast.
 TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
-#: Network failures worth asking again; anything else requests raises (an invalid URL, a TLS refusal) is not.
+#: Network failures worth asking again; anything else requests raises (an invalid URL) is not.
 TRANSIENT_ERRORS: tuple[type[Exception], ...] = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
+#: Subclasses of ConnectionError that are not transient: a certificate or TLS failure, or a proxy refusal (no
+#: proxy is ever configured, so one means something is wrong), will not get better by waiting.
+NEVER_RETRIED: tuple[type[Exception], ...] = (requests.exceptions.SSLError, requests.exceptions.ProxyError)
 MAX_TRANSIENT_RETRIES = 3
 TRANSIENT_BACKOFF_SECONDS = (5.0, 30.0, 120.0)
 CONNECT_TIMEOUT = 15
@@ -257,6 +260,8 @@ class ReadOnlyClient:
         self._lock = threading.Lock()
 
     def _new_session(self) -> _GuardedSession:
+        # Without an injected adapter (every production caller), the session builds its own HTTPAdapter, so a
+        # replacement session holds a new connection pool. An injected adapter is a test seam and is shared.
         session = _GuardedSession(self._root, self._verify)
         session.auth = self._auth
         session.headers.update({"X-Requested-With": USER_AGENT, "User-Agent": USER_AGENT})
@@ -308,7 +313,7 @@ class ReadOnlyClient:
                 self._observe(url, outcome.raw, outcome.prepared, outcome.body, outcome.not_read)
             wait: float | None = None
             if outcome.error is not None:
-                if not (self._retry_transient and isinstance(outcome.error, TRANSIENT_ERRORS)):
+                if not (self._retry_transient and _transient(outcome.error)):
                     raise outcome.error
                 wait, transient = _backoff(transient), transient + 1
             else:
@@ -388,6 +393,10 @@ def _attempt(session: requests.Session, url: str, verify: bool | str) -> _Outcom
 
 
 Bound = Callable[[Callable[[], _Outcome]], _Outcome]
+
+
+def _transient(error: Exception) -> bool:
+    return isinstance(error, TRANSIENT_ERRORS) and not isinstance(error, NEVER_RETRIED)
 
 
 def _backoff(transient: int) -> float | None:

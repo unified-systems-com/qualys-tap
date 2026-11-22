@@ -239,7 +239,7 @@ A scheduled workflow compares the DTDs Qualys serves with the committed sources,
 
 #### Implementation
 
-`.github/workflows/qualys-drift.yml`, scheduled weekly and on demand, with `contents: read` and no write token: the failing run is the signal, and no issue is opened. It runs `python -m tap_plugin.qualys.contract.drift`, which uses only the standard library, so the workflow installs nothing. It fails on a changed consumed element and lists other changes in the run summary without failing.
+`.github/workflows/qualys-drift.yml`, scheduled weekly and on demand, with `contents: read` and no write token: the failing run is the signal, and no issue is opened. Its `served` job runs `python -m tap_plugin.qualys.contract.drift`, which uses only the standard library, so that job installs nothing. It fails on a changed consumed element and lists other changes in the run summary without failing.
 
 Qualys serves its API DTDs without a credential: fetched from `qualysapi.qualys.com` on 2026-11-21. So the workflow fetches both from the documented DTD paths on that host (`drift served`), with no redirect followed and a size bound. Other platforms are not checked; the ledger entry `dtd-unauthenticated` stays open for them, and the observation command reports it per subscription. Two other modes stay available by hand:
 
@@ -247,6 +247,8 @@ Qualys serves its API DTDs without a credential: fetched from `qualysapi.qualys.
 - `drift file <document> < <path>` compares a DTD on disk, read from standard input; the command takes no path.
 
 The DTDs carried by each export archive are compared at load time through the same function (`req-qualys-file-import`).
+
+A second job, `elastic-fixtures`, holds the parsers to third-party pages (unified-systems-com/qualys-tap#45, ruled Q28a). Elastic's `qualys_vmdr` integration ships a mock Qualys server whose configuration carries 5.0 detection pages and 4.0 knowledge-base pages from three platforms. It is under the Elastic License 2.0, so it is never committed here. `python -m tap_plugin.qualys.contract.elastic` fetches it at a pinned commit, refuses it unless its SHA-256 is the recorded one, and parses every page. The job fails if a page is refused, or if a page yields a different count of hosts, detections or QIDs than recorded. The parser needs `defusedxml`, which the job installs by hash into a throwaway virtual environment, at the same pin as `pyproject.toml`. The suite opens no socket (`req-qualys-contract-extract-2`), so the fetch lives here; the extraction and the expectations are tested offline. Moving the pin is one deliberate change: commit, hash and expectations together.
 
 No credential is ever placed in CI.
 
@@ -258,6 +260,7 @@ No credential is ever placed in CI.
 | req-qualys-drift-ci-2 | Reports Other Changes Without Failing | Proposed | A change outside the consumed set is listed in the run summary and does not fail. | |
 | req-qualys-drift-ci-3 | Read-Only Permissions, No Credential | Proposed | The workflow grants `contents: read` only, opens no issue and uses no Qualys credential. | |
 | req-qualys-drift-ci-4 | DTDs In Hand Are Compared Too | Proposed | The DTDs an export archive or a live run carries are reduced and compared with the extract when they are loaded, and a consumed difference is recorded on the run as `CONTRACT_DRIFT`. | Covers the case where CI cannot reach a DTD. |
+| req-qualys-drift-ci-5 | Third-Party Pages Are Parsed | Proposed | A scheduled job fetches Elastic's `qualys_vmdr` mock configuration at a pinned commit, refuses it unless its SHA-256 matches, and fails if any page is refused or yields other counts than recorded. | unified-systems-com/qualys-tap#45; not vendored (Elastic License 2.0). |
 
 ### The Observation Command
 ----
@@ -357,7 +360,7 @@ What one run asks Qualys for, and how a run knows where the last one stopped.
 
 #### Implementation
 
-Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1` and `show_qds=1`, plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
+Every detection read sends `action=list`, `status=New,Active,Re-Opened,Fixed`, `show_results=1`, `show_reopened_info=1`, `include_ignored=1`, `include_disabled=1`, `show_asset_id=1`, `host_metadata=ec2`, `show_cloud_tags=1`, `show_qds=1` and `show_qds_factors=1` (without it Qualys returns no `QDS_FACTORS`, so `qds_factors` would always be null on a live read; unified-systems-com/qualys-tap#50), plus the envelope's scope filter when set. It pages by the next-page URL Qualys returns (`truncation_limit=1000`, documented default).
 
 The first run for a subscription is **complete**: no time filter, and no filter beyond the standing scope. A later run is a **window** read: `vm_processed_after` set to the previous successful run's watermark, minus a fixed overlap of one hour so a detection processed during the last read is not missed. The watermark is the start time of a run whose every page was read and validated, and it is stored on the subscription node. A run that failed, stopped early, ended on a next-page URL it did not follow (`TRUNCATED`), holds pages that are not one unbroken next-page chain (`TRUNCATED`: a page other than the last with no link, or a following page whose first host is below the link's `id_min` or not above the linking page's last host; `unified-systems-com/qualys-tap#19`), hit a size or time ceiling, recorded any detection page in `scopes_not_read`, or read any page only partly (an unkeyable detection, `req-qualys-detection-5`) does not advance it. A complete read is repeated on a fixed interval (default 7 days, a constant in v0) so host withdrawal (`req-qualys-states`) can be judged. `detection_updated_since` is not used until the ledger settles it.
 
@@ -465,7 +468,7 @@ The node carries, as returned:
 - the detection: `TYPE`, `PORT`, `PROTOCOL`, `FQDN`, `SSL`, `STATUS`, `SEVERITY`;
 - its history: `FIRST_FOUND_DATETIME`, `LAST_FOUND_DATETIME`, `LAST_FIXED_DATETIME`, `LAST_REOPENED_DATETIME`, `TIMES_FOUND`, `TIMES_REOPENED`, `LAST_TEST_DATETIME`, `LAST_UPDATE_DATETIME`, `LAST_PROCESSED_DATETIME`;
 - `IS_IGNORED`, `IS_DISABLED`;
-- `QDS` and its factors;
+- `QDS`, its `severity` attribute (`qds_severity`, unified-systems-com/qualys-tap#51) and its factors;
 - `RESULTS` in full, never truncated into a key or a hash.
 
 It also carries the resolution fields of `req-qualys-states` and, from `req-qualys-parsers`, the parse state, the parser id and version, and the observations.

@@ -8,7 +8,9 @@ followed to its end. Every request goes through :class:`~tap_plugin.qualys.clien
 but an allowlisted GET can leave, and every request is bounded by a wall-clock ceiling.
 
 The probe failing ends the read with nothing to write. A page failing later stops the walk: what was read is
-kept, the walk is recorded incomplete, and the watermark does not move. Nothing here touches the grid.
+kept, the walk is recorded incomplete, and the watermark does not move. That holds for a network error
+(a reset, a read timeout) as much as for an HTTP error: neither may discard the pages already read
+(unified-systems-com/qualys-tap#46). Nothing here touches the grid.
 """
 
 import functools
@@ -19,6 +21,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
+
+import requests
 
 from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadFailed, ReadOnlyClient, Response, TransportRefused
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage, PageRefused, parse_detection_page, parse_knowledgebase_page
@@ -54,6 +58,7 @@ _BASE = {
     "host_metadata": "ec2",
     "show_cloud_tags": "1",
     "show_qds": "1",
+    "show_qds_factors": "1",
 }
 
 
@@ -189,7 +194,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
         raise ProbeFailed(f"the probe was refused (HTTP {exc.status})" if exc.status else "the probe read did not return a usable body") from None
     except PageRefused:
         raise ProbeFailed("the probe's answer is not a detection document") from None
-    except (TimeoutError, TransportRefused) as exc:
+    except (TimeoutError, TransportRefused, requests.RequestException) as exc:
         raise ProbeFailed(f"the probe did not complete ({type(exc).__name__})") from None
     limits = _limits(reply.headers)
     # The probe's own limits, and the last response's beside them (req-qualys-probe-4): neither overwrites the other.
@@ -212,7 +217,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
         try:
             reply = _get(client, url, bounded, f"detections-{number}")
             page = parse_detection_page(reply.body)
-        except (ReadFailed, TransportRefused, PageRefused, TimeoutError) as exc:
+        except (ReadFailed, TransportRefused, PageRefused, TimeoutError, requests.RequestException) as exc:
             result.walk_complete = False
             result.detection_pages_not_read.append({"scope": f"detection page {number}", "reason": f"not read: {type(exc).__name__}"})
             break
@@ -246,7 +251,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             try:
                 reply = _get(client, knowledgebase_url(client.root, remaining), bounded, "knowledgebase")
                 kb_page = parse_knowledgebase_page(reply.body)
-            except (ReadFailed, TransportRefused, PageRefused, TimeoutError):
+            except (ReadFailed, TransportRefused, PageRefused, TimeoutError, requests.RequestException):
                 result.knowledgebase_complete = False
                 break
             result.requests += 1

@@ -218,7 +218,7 @@ _HOST_FIELDS = (
 _DETECTION_FIELDS = (
     "detection_type", "port", "protocol", "fqdn", "ssl", "status", "severity", "first_found_datetime", "last_found_datetime",
     "last_fixed_datetime", "last_reopened_datetime", "times_found", "times_reopened", "last_test_datetime",
-    "last_update_datetime", "last_processed_datetime", "is_ignored", "is_disabled", "qds", "results",
+    "last_update_datetime", "last_processed_datetime", "is_ignored", "is_disabled", "qds", "qds_severity", "results",
 )
 _QID_FIELDS = (
     "vuln_type", "severity_level", "title", "category", "patchable", "published_datetime",

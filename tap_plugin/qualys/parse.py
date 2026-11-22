@@ -180,6 +180,8 @@ def _detection(node: Element) -> dict[str, Any]:
         "first_found_datetime": _text(node, "FIRST_FOUND_DATETIME"),
         "last_found_datetime": _text(node, "LAST_FOUND_DATETIME"),
         "qds": None if qds is None else (qds.text or "").strip(),
+        # The DTD declares QDS's severity attribute #REQUIRED; kept beside the score (unified-systems-com/qualys-tap#51).
+        "qds_severity": None if qds is None else qds.get("severity"),
         "qds_factors": None if factors is None else [
             {"name": f.get("name"), "value": (f.text or "").strip()} for f in factors.findall("QDS_FACTOR")
         ],

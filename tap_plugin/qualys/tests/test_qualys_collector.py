@@ -459,3 +459,27 @@ class TestQdsAsReturned:
         assert row.qds_factors
         absent = QualysDetection.objects.filter(subscription_key=KEY, qds__isnull=True)
         assert absent.exists() and not absent.exclude(qds_severity__isnull=True).exists()  # no QDS, no severity: null
+
+
+@pytest.mark.django_db
+class TestEmptyBodyIsMissingEvidence:
+    """unified-systems-com/qualys-tap#52 (Q30a): a 200 with no body withdraws nothing and moves nothing."""
+
+    def test_an_empty_only_page_on_a_complete_read_withdraws_nothing(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The dangerous case: a single empty first page with no next link. Read as "no hosts", it would pass
+        # every completeness check (one page, no onward link, no chain to break) and withdraw every host.
+        _collector(monkeypatch, Router()).run()
+        hosts = set(QualysHost.objects.filter(subscription_key=KEY, state="current").values_list("host_id", flat=True))
+        watermark = QualysSubscription.objects.get(subscription_key=KEY).watermark
+        monkeypatch.setattr(live, "COMPLETE_INTERVAL", timedelta(0))  # a complete read: the one that may withdraw
+        _collector(monkeypatch, Router(page1=(200, b"", {}))).run()
+        assert hosts and set(QualysHost.objects.filter(subscription_key=KEY, state="current").values_list("host_id", flat=True)) == hosts
+        assert QualysSubscription.objects.get(subscription_key=KEY).watermark == watermark
+        assert {"scope": "detection page 1", "reason": "not read: EmptyBody"} in _run_row().scopes_not_read
+
+    def test_an_empty_probe_is_a_failed_probe(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        collector = _collector(monkeypatch, Router(probe=(200, b"", {})))
+        with pytest.raises(QualysCollectorError):
+            collector.run()
+        assert any("empty" in e.get("message", "") for e in collector.results["error"])
+        assert not QualysScanRun.objects.exists()

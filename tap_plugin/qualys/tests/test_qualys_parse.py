@@ -186,3 +186,39 @@ class TestThirdPartyFixture:
         # The Info detection carries no dates; they stay unobserved too.
         info = page.hosts[0]["detections"][2]
         assert info["first_found_datetime"] is None and info["last_found_datetime"] is None
+
+
+@pytest.mark.spec("req-qualys-contract-extract-6")
+class TestEmptyBody:
+    """unified-systems-com/qualys-tap#52 (Q30a): an empty page is refused by name, never read as no hosts."""
+
+    @pytest.mark.parametrize("body", [b"", b"   ", b"\n\r\n\t"])
+    def test_an_empty_page_is_refused_as_empty(self, body: bytes) -> None:
+        from tap_plugin.qualys.parse import EmptyBody, PageRefused
+
+        for parse in (parse_detection_page, parse_knowledgebase_page):
+            with pytest.raises(EmptyBody) as caught:
+                parse(body)
+            assert isinstance(caught.value, PageRefused)  # every caller of PageRefused still refuses it
+
+    def test_a_malformed_page_is_not_called_empty(self) -> None:
+        from tap_plugin.qualys.parse import EmptyBody, PageRefused
+
+        with pytest.raises(PageRefused) as caught:
+            parse_detection_page(b"<HOST_LIST_VM_DETECTION_OUTPUT><RESPONSE>")
+        assert not isinstance(caught.value, EmptyBody)
+
+    def test_the_size_ceiling_is_checked_before_emptiness(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # PR #64 round 1 (Codex): an over-ceiling body is refused for its size, never scanned for emptiness first.
+        from tap_plugin.qualys import parse as parse_module
+        from tap_plugin.qualys.parse import EmptyBody
+
+        monkeypatch.setattr(parse_module, "MAX_PAGE_BYTES", 8)
+
+        class NoStrip(bytes):
+            def strip(self, *a):  # type: ignore[override]
+                raise AssertionError("an over-ceiling body was scanned")
+
+        with pytest.raises(PageRefused, match="larger than") as caught:
+            parse_detection_page(NoStrip(b" " * 16))
+        assert not isinstance(caught.value, EmptyBody)

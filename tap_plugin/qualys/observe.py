@@ -254,11 +254,15 @@ class Observation:
 Get = Callable[[str, str], Response]
 
 
+def _ceiling(name: str, attempt: Callable[[], Any]) -> Any:
+    return run_with_ceiling(attempt, live.READ_CEILING_SECONDS, name=name)
+
+
 def _bounded(client: ReadOnlyClient, recorder: Recorder) -> Get:
     def get(url: str, step: str) -> Response:
         recorder.step = step
         try:
-            return run_with_ceiling(functools.partial(client.get, url), live.READ_CEILING_SECONDS, name=f"qualys-observe-{step}")
+            return client.get(url, bound=functools.partial(_ceiling, f"qualys-observe-{step}"))
         except CeilingExceeded as exc:
             raise TimeoutError(f"{step} did not finish within its ceiling") from exc
 
@@ -650,8 +654,9 @@ def main(argv: list[str] | None = None, *, out: TextIO = sys.stdout, adapter: HT
     recorder = Recorder(directory)
     try:
         username, password = credential.basic
-        client = ReadOnlyClient(credential.api_host, username, password, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder)
-        anonymous = ReadOnlyClient.anonymous(credential.api_host, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder)
+        # No transient retries: the command records what Qualys answered, and a retry would hide the first answer.
+        client = ReadOnlyClient(credential.api_host, username, password, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder, retry_transient=False)
+        anonymous = ReadOnlyClient.anonymous(credential.api_host, ca_bundle=credential.ca_bundle, adapter=adapter, observer=recorder, retry_transient=False)
         obs = run_reads(credential, client, anonymous, recorder)
     finally:
         directory.close()

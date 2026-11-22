@@ -13,6 +13,7 @@ from tap_plugin.qualys import client as client_module
 from tap_plugin.qualys.client import (
     DETECTION_PATH,
     KNOWLEDGEBASE_PATH,
+    OutOfTime,
     ReadFailed,
     ReadOnlyClient,
     TransportRefused,
@@ -271,3 +272,303 @@ class TestNextPage:
     def test_next_page_to_another_host_refused(self) -> None:
         with pytest.raises(TransportRefused, match="outside"):
             check_url("https://qualysapi.qualys.com.evil.example" + DETECTION_PATH + "?action=list&id_min=2", HOST)
+
+
+class Raising(FakeAdapter):
+    """Raises the scripted exception for an answer that is an exception, as a reset or timeout would."""
+
+    def send(self, request, **kwargs):
+        if isinstance(self.answers[0], Exception):
+            self.seen.append(request)
+            error = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            raise error
+        return super().send(request, **kwargs)
+
+
+class _CutBody(io.BytesIO):
+    def read(self, *a, **k):
+        raise requests.exceptions.ChunkedEncodingError("connection broken mid-body")
+
+
+CONCURRENCY = b"<SIMPLE_RETURN><RESPONSE><CODE>1960</CODE><TEXT>concurrency</TEXT></RESPONSE></SIMPLE_RETURN>"
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestTransientRetries:
+    """unified-systems-com/qualys-tap#47: a transient failure is asked again, a bounded number of times."""
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+    def test_a_transient_status_is_retried(self, status: int) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((status, b"down", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        assert client.get(DETECTION).status == 200
+        assert sleeps == [client_module.TRANSIENT_BACKOFF_SECONDS[0]] and len(adapter.seen) == 2
+
+    def test_retries_are_bounded_and_then_fail_with_the_status(self) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((503, b"down", {}), sleeps=sleeps)
+        with pytest.raises(ReadFailed) as caught:
+            client.get(DETECTION)
+        assert caught.value.status == 503
+        assert len(adapter.seen) == client_module.MAX_TRANSIENT_RETRIES + 1
+        assert sleeps == list(client_module.TRANSIENT_BACKOFF_SECONDS)
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_other_errors_are_not_retried(self, status: int) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((status, b"no", {}), sleeps=sleeps)
+        with pytest.raises(ReadFailed):
+            client.get(DETECTION)
+        assert sleeps == [] and len(adapter.seen) == 1
+
+    @pytest.mark.parametrize("error", [requests.ConnectionError("reset"), requests.ReadTimeout("slow"), requests.ConnectTimeout("no route")])
+    def test_a_network_error_is_retried(self, error: Exception) -> None:
+        sleeps: list[float] = []
+        adapter = Raising(error, (200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=sleeps.append)
+        assert client.get(DETECTION).body == b"<x/>" and len(sleeps) == 1
+
+    def test_a_persistent_network_error_is_raised_as_itself(self) -> None:
+        adapter = Raising(requests.ConnectionError("reset"))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None)
+        with pytest.raises(requests.ConnectionError):
+            client.get(DETECTION)
+        assert len(adapter.seen) == client_module.MAX_TRANSIENT_RETRIES + 1
+
+    def test_a_body_cut_short_is_retried_and_observed(self) -> None:
+        seen = []
+
+        class Cut(FakeAdapter):
+            def send(self, request, **kwargs):
+                response = super().send(request, **kwargs)
+                if len(self.seen) == 1:
+                    response.raw = _CutBody()
+                return response
+
+        adapter = Cut((200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None, observer=seen.append)
+        assert client.get(DETECTION).body == b"<x/>"
+        assert [e.body_not_read for e in seen] == ["ChunkedEncodingError", None]
+
+    def test_retries_off_fails_on_the_first_answer(self) -> None:
+        client, adapter = make((502, b"down", {}), (200, b"<x/>", {}), retry_transient=False)
+        with pytest.raises(ReadFailed):
+            client.get(DETECTION)
+        assert len(adapter.seen) == 1
+
+    def test_transient_and_throttle_waits_share_one_budget(self, monkeypatch) -> None:
+        monkeypatch.setattr(client_module, "MAX_WAIT_TOTAL_SECONDS", 20)
+        sleeps: list[float] = []
+        client, adapter = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "10"}), (502, b"", {}), (502, b"", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        with pytest.raises(ReadFailed):
+            client.get(DETECTION)
+        assert sleeps == [10.0, 5.0] and len(adapter.seen) == 3  # the next backoff (30s) would pass the budget
+
+    def test_a_refusal_is_never_retried(self) -> None:
+        client, adapter = make((200, b"<x/>", {}))
+        with pytest.raises(TransportRefused):
+            client.get(f"{HOST}/api/2.0/fo/session/?action=login")
+        assert adapter.seen == []
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestConcurrencyWaitFloor:
+    """unified-systems-com/qualys-tap#48: a 1960 wait whose header says 0 still waits."""
+
+    @pytest.mark.parametrize("header", ["0", "1", None])
+    def test_a_1960_wait_is_at_least_the_floor(self, header: str | None) -> None:
+        sleeps: list[float] = []
+        headers = {} if header is None else {"X-RateLimit-ToWait-Sec": header}
+        client, _ = make((409, CONCURRENCY, headers), (200, b"<x/>", {}), sleeps=sleeps)
+        client.get(DETECTION)
+        assert sleeps == [max(client_module.CONCURRENCY_WAIT_FLOOR_SECONDS, float(header or client_module.DEFAULT_WAIT_SECONDS))]
+
+    def test_a_1965_wait_still_follows_its_header(self) -> None:
+        sleeps: list[float] = []
+        client, _ = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "2"}), (200, b"<x/>", {}), sleeps=sleeps)
+        client.get(DETECTION)
+        assert sleeps == [2.0]
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestCeilingBoundsAttemptsNotWaits:
+    """unified-systems-com/qualys-tap#49: the per-request ceiling is around each attempt; the waits are outside it."""
+
+    def test_each_attempt_is_bounded_and_no_wait_is_inside(self) -> None:
+        inside, events = [False], []
+
+        def bound(attempt):
+            inside[0] = True
+            try:
+                events.append("attempt")
+                return attempt()
+            finally:
+                inside[0] = False
+
+        def sleep(seconds: float) -> None:
+            assert not inside[0], "a wait ran inside the ceiling"
+            events.append("sleep")
+
+        adapter = FakeAdapter((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "600"}), (502, b"", {}), (200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=sleep)
+        assert client.get(DETECTION, bound=bound).status == 200
+        assert events == ["attempt", "sleep", "attempt", "sleep", "attempt"]
+
+    def test_an_attempt_past_the_ceiling_is_not_retried_and_its_session_is_dropped(self) -> None:
+        client, adapter = make((200, b"<x/>", {}))
+        before = client._session
+
+        def timed_out(attempt):
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=timed_out)
+        assert adapter.seen == [] and client._session is not before
+        assert client.get(DETECTION).status == 200  # the new session works, and the lock was released
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound1:
+    """PR #62 round 1 (Codex, Grok): TLS and proxy failures are not transient; a replaced session has its own pool."""
+
+    @pytest.mark.parametrize("error", [requests.exceptions.SSLError("certificate verify failed"), requests.exceptions.ProxyError("proxy refused")])
+    def test_a_tls_or_proxy_failure_is_not_retried(self, error: Exception) -> None:
+        assert isinstance(error, requests.ConnectionError)  # why it needs excluding by name
+        sleeps: list[float] = []
+        adapter = Raising(error, (200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=sleeps.append)
+        with pytest.raises(type(error)):
+            client.get(DETECTION)
+        assert len(adapter.seen) == 1 and sleeps == []
+
+    def test_a_replaced_session_does_not_share_the_abandoned_pool(self) -> None:
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", sleep=lambda s: None)  # no injected adapter: production
+        before = client._session.adapters["https://"]
+
+        def timed_out(attempt):
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=timed_out)
+        assert client._session.adapters["https://"] is not before
+
+    def test_the_collector_ceiling_is_a_timeout_error(self) -> None:
+        from tap_cares.collectors import CeilingExceeded
+
+        assert issubclass(CeilingExceeded, TimeoutError)  # so the swap runs when observe's run_with_ceiling raises it
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound2:
+    """PR #62 round 2 (Grok): an attempt abandoned at the ceiling must not run beside the next request."""
+
+    def test_reads_are_refused_while_an_abandoned_attempt_runs(self) -> None:
+        import threading
+
+        release, entered = threading.Event(), threading.Event()
+
+        class Hanging(FakeAdapter):
+            def send(self, request, **kwargs):
+                if len(self.seen) == 0:
+                    self.seen.append(request)
+                    entered.set()
+                    release.wait(5)
+                    raise requests.ConnectionError("gave up")
+                return super().send(request, **kwargs)
+
+        adapter = Hanging((200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None)
+
+        def ceiling(attempt):  # what run_with_ceiling does: start the attempt on a thread, give up on it
+            threading.Thread(target=attempt, daemon=True).start()
+            entered.wait(5)
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=ceiling)
+        with pytest.raises(ReadFailed, match="still running"):
+            client.get(DETECTION)
+        assert len(adapter.seen) == 1  # the refused read sent nothing
+
+        release.set()
+        for _ in range(100):
+            if client._abandoned and client._abandoned.finished.is_set():
+                break
+            import time as _t
+            _t.sleep(0.01)
+        assert client.get(DETECTION).status == 200  # serial again once the abandoned attempt has ended
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound3:
+    """PR #62 round 3 (Codex): an attempt whose thread starts only after the ceiling gave up never sends."""
+
+    def test_an_attempt_started_after_it_was_abandoned_sends_nothing(self) -> None:
+        import threading
+
+        client, adapter = make((200, b"<x/>", {}))
+        late: list = []
+
+        def ceiling(attempt):  # the worker thread has not started when the ceiling gives up
+            late.append(attempt)
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=ceiling)
+        assert client._abandoned is None  # it never started, so nothing is held
+        outcome = late[0]()  # the late start
+        assert isinstance(outcome.error, TimeoutError) and adapter.seen == []
+        worker = threading.Thread(target=late[0])
+        worker.start()
+        worker.join(5)
+        assert adapter.seen == []  # still nothing sent, however late it runs
+        assert client.get(DETECTION).status == 200 and len(adapter.seen) == 1
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound4:
+    """PR #62 round 4 (Codex): no attempt starts once the run's ceiling has passed and no wait starts that would reach
+    it, so a run overshoots it by at most one attempt, as it did before the ceiling moved inside the retries."""
+
+    def test_a_wait_that_would_pass_the_run_ceiling_is_not_slept(self) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((502, b"", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        with pytest.raises(OutOfTime):
+            client.get(DETECTION, remaining=lambda: 4.0)  # the first backoff is 5s
+        assert len(adapter.seen) == 1 and sleeps == []
+
+    def test_no_attempt_starts_once_the_run_ceiling_has_passed(self) -> None:
+        now = [0.0]
+        client, adapter = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "600"}), (200, b"<x/>", {}))
+        client._sleep = lambda s: now.__setitem__(0, now[0] + s + 1)  # the wait itself overruns by a second
+        with pytest.raises(OutOfTime):
+            client.get(DETECTION, remaining=lambda: 601.0 - now[0])
+        assert len(adapter.seen) == 1  # waited to the ceiling, then sent nothing more
+
+    def test_a_ceiling_already_passed_sends_nothing(self) -> None:
+        client, adapter = make((200, b"<x/>", {}))
+        with pytest.raises(OutOfTime):
+            client.get(DETECTION, remaining=lambda: 0.0)
+        assert adapter.seen == []
+
+    def test_waits_inside_the_run_ceiling_still_run(self) -> None:
+        sleeps: list[float] = []
+        client, _ = make((502, b"", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        assert client.get(DETECTION, remaining=lambda: 3600.0).status == 200 and sleeps == [5.0]
+
+    def test_the_live_read_passes_the_time_left_on_its_run(self) -> None:
+        from tap_plugin.qualys import live
+
+        seen: list[float] = []
+
+        class Stub:
+            root = HOST
+
+            def get(self, url, *, bound=None, remaining=None):
+                seen.append(remaining())
+                raise ReadFailed("refused", status=401)
+
+        ticks = iter([1000.0, 1000.0 + 3600.0])
+        with pytest.raises(live.ProbeFailed):
+            live.read(Stub(), {}, live.Plan(live.COMPLETE, None), bounded=lambda call, what: call(), clock=lambda: next(ticks))
+        assert seen == [live.RUN_CEILING_SECONDS - 3600.0]

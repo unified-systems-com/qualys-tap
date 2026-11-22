@@ -137,6 +137,10 @@ class ReadFailed(Exception):
         self.status = status
 
 
+class OutOfTime(ReadFailed):
+    """A read the run's own ceiling ended between attempts: no attempt starts, and no wait runs, past it."""
+
+
 def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
     """The operation path and parameters of an allowlisted URL under ``root``; refuse anything else."""
     parts = urlsplit(url)
@@ -293,17 +297,19 @@ class ReadOnlyClient:
     def root(self) -> str:
         return self._root
 
-    def get(self, url: str, *, bound: Bound | None = None) -> Response:
+    def get(self, url: str, *, bound: Bound | None = None, remaining: Callable[[], float] | None = None) -> Response:
         """One allowlisted read, waiting out Qualys's throttling and transient failures within the bounds.
 
         ``bound``, when given, runs each attempt under the caller's ceiling; the waits between attempts are not
-        inside it. A ``TimeoutError`` from it ends the read: the attempt is abandoned, not retried.
+        inside it. A ``TimeoutError`` from it ends the read: the attempt is abandoned, not retried. ``remaining``,
+        when given, is the seconds left on the caller's run: no attempt starts and no wait runs past it, so a run
+        overshoots its ceiling by at most one attempt (PR #62 round 4).
         """
         check_url(url, self._root)
         with self._lock:
-            return self._get(url, bound)
+            return self._get(url, bound, remaining)
 
-    def _get(self, url: str, bound: Bound | None) -> Response:
+    def _get(self, url: str, bound: Bound | None, remaining: Callable[[], float] | None) -> Response:
         if self._abandoned is not None:
             if not self._abandoned.finished.is_set():
                 # Qualys's concurrency limit is shared by every integration on the subscription; a second request
@@ -312,6 +318,8 @@ class ReadOnlyClient:
             self._abandoned = None
         waited, transient = 0.0, 0
         for attempt in range(MAX_RETRIES + MAX_TRANSIENT_RETRIES + 1):
+            if remaining is not None and remaining() <= 0:
+                raise OutOfTime("the run's ceiling passed before this attempt")
             session, state = self._session, _Attempt()
             run = functools.partial(_attempt, session, url, self._verify, state)
             try:
@@ -350,6 +358,8 @@ class ReadOnlyClient:
                     raise ReadFailed(f"Qualys answered HTTP {raw.status_code}", status=raw.status_code)
             if wait is None or waited + wait > MAX_WAIT_TOTAL_SECONDS:
                 raise _exhausted(outcome)
+            if remaining is not None and wait >= remaining():
+                raise OutOfTime("the run's ceiling would pass during the wait")
             self._sleep(wait)
             waited += wait
         raise ReadFailed("retried past the bound")  # unreachable: the counts above end the loop first

@@ -13,6 +13,7 @@ from tap_plugin.qualys import client as client_module
 from tap_plugin.qualys.client import (
     DETECTION_PATH,
     KNOWLEDGEBASE_PATH,
+    OutOfTime,
     ReadFailed,
     ReadOnlyClient,
     TransportRefused,
@@ -522,3 +523,52 @@ class TestReviewRound3:
         worker.join(5)
         assert adapter.seen == []  # still nothing sent, however late it runs
         assert client.get(DETECTION).status == 200 and len(adapter.seen) == 1
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound4:
+    """PR #62 round 4 (Codex): no attempt starts and no wait runs past the run's ceiling, so a run overshoots it by
+    at most one attempt, as it did before the ceiling moved inside the retries."""
+
+    def test_a_wait_that_would_pass_the_run_ceiling_is_not_slept(self) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((502, b"", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        with pytest.raises(OutOfTime):
+            client.get(DETECTION, remaining=lambda: 4.0)  # the first backoff is 5s
+        assert len(adapter.seen) == 1 and sleeps == []
+
+    def test_no_attempt_starts_once_the_run_ceiling_has_passed(self) -> None:
+        now = [0.0]
+        client, adapter = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "600"}), (200, b"<x/>", {}))
+        client._sleep = lambda s: now.__setitem__(0, now[0] + s + 1)  # the wait itself overruns by a second
+        with pytest.raises(OutOfTime):
+            client.get(DETECTION, remaining=lambda: 601.0 - now[0])
+        assert len(adapter.seen) == 1  # waited to the ceiling, then sent nothing more
+
+    def test_a_ceiling_already_passed_sends_nothing(self) -> None:
+        client, adapter = make((200, b"<x/>", {}))
+        with pytest.raises(OutOfTime):
+            client.get(DETECTION, remaining=lambda: 0.0)
+        assert adapter.seen == []
+
+    def test_waits_inside_the_run_ceiling_still_run(self) -> None:
+        sleeps: list[float] = []
+        client, _ = make((502, b"", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        assert client.get(DETECTION, remaining=lambda: 3600.0).status == 200 and sleeps == [5.0]
+
+    def test_the_live_read_passes_the_time_left_on_its_run(self) -> None:
+        from tap_plugin.qualys import live
+
+        seen: list[float] = []
+
+        class Stub:
+            root = HOST
+
+            def get(self, url, *, bound=None, remaining=None):
+                seen.append(remaining())
+                raise ReadFailed("refused", status=401)
+
+        ticks = iter([1000.0, 1000.0 + 3600.0])
+        with pytest.raises(live.ProbeFailed):
+            live.read(Stub(), {}, live.Plan(live.COMPLETE, None), bounded=lambda call, what: call(), clock=lambda: next(ticks))
+        assert seen == [live.RUN_CEILING_SECONDS - 3600.0]

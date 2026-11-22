@@ -154,8 +154,8 @@ class LiveRead:
 Bounded = Callable[[Callable[[], Any], str], Any]
 
 
-def _get(client: ReadOnlyClient, url: str, bounded: Bounded, what: str) -> Response:
-    return client.get(url, bound=functools.partial(_bound_attempt, bounded, what))
+def _get(client: ReadOnlyClient, url: str, bounded: Bounded, what: str, remaining: Callable[[], float]) -> Response:
+    return client.get(url, bound=functools.partial(_bound_attempt, bounded, what), remaining=remaining)
 
 
 def _bound_attempt(bounded: Bounded, what: str, attempt: Callable[[], Any]) -> Any:
@@ -180,6 +180,10 @@ def _eos(page: DetectionPage | KnowledgeBasePage, where: str) -> dict[str, str] 
 def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *, bounded: Bounded, clock: Callable[[], float] = time.monotonic) -> LiveRead:
     """Probe, then walk the detection pages, then the knowledge base. Raises ProbeFailed when the probe does."""
     started = clock()
+
+    def time_left() -> float:
+        return RUN_CEILING_SECONDS - (clock() - started)
+
     applied: dict[str, Any] = dict(scope)
     if the_plan.window_start is not None:
         applied["vm_processed_after"] = the_plan.window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -187,7 +191,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
     # The probe: an ordinary allowlisted read of one host. A refused credential, a scope Qualys rejects, or a
     # body that is not a detection document ends the run before anything is written (req-qualys-probe-2, -detection-read-5).
     try:
-        reply = _get(client, detection_url(client.root, scope, the_plan.window_start, limit=1), bounded, "probe")
+        reply = _get(client, detection_url(client.root, scope, the_plan.window_start, limit=1), bounded, "probe", time_left)
         probe_page = parse_detection_page(reply.body)
     # Fixed messages only: nothing a response said, and no exception's own text, reaches the run's record.
     except ReadFailed as exc:
@@ -204,7 +208,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
         result.warnings.append(w)
 
     def out_of_time() -> bool:
-        return clock() - started >= RUN_CEILING_SECONDS
+        return time_left() <= 0
 
     # The detection walk.
     url: str | None = detection_url(client.root, scope, the_plan.window_start)
@@ -215,7 +219,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             break
         number = len(result.pages) + 1
         try:
-            reply = _get(client, url, bounded, f"detections-{number}")
+            reply = _get(client, url, bounded, f"detections-{number}", time_left)
             page = parse_detection_page(reply.body)
         except (ReadFailed, TransportRefused, PageRefused, TimeoutError, requests.RequestException) as exc:
             result.walk_complete = False
@@ -249,7 +253,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
                 result.knowledgebase_complete = False
                 break
             try:
-                reply = _get(client, knowledgebase_url(client.root, remaining), bounded, "knowledgebase")
+                reply = _get(client, knowledgebase_url(client.root, remaining), bounded, "knowledgebase", time_left)
                 kb_page = parse_knowledgebase_page(reply.body)
             except (ReadFailed, TransportRefused, PageRefused, TimeoutError, requests.RequestException):
                 result.knowledgebase_complete = False

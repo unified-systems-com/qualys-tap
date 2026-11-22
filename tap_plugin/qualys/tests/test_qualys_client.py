@@ -271,3 +271,156 @@ class TestNextPage:
     def test_next_page_to_another_host_refused(self) -> None:
         with pytest.raises(TransportRefused, match="outside"):
             check_url("https://qualysapi.qualys.com.evil.example" + DETECTION_PATH + "?action=list&id_min=2", HOST)
+
+
+class Raising(FakeAdapter):
+    """Raises the scripted exception for an answer that is an exception, as a reset or timeout would."""
+
+    def send(self, request, **kwargs):
+        if isinstance(self.answers[0], Exception):
+            self.seen.append(request)
+            error = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
+            raise error
+        return super().send(request, **kwargs)
+
+
+class _CutBody(io.BytesIO):
+    def read(self, *a, **k):
+        raise requests.exceptions.ChunkedEncodingError("connection broken mid-body")
+
+
+CONCURRENCY = b"<SIMPLE_RETURN><RESPONSE><CODE>1960</CODE><TEXT>concurrency</TEXT></RESPONSE></SIMPLE_RETURN>"
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestTransientRetries:
+    """unified-systems-com/qualys-tap#47: a transient failure is asked again, a bounded number of times."""
+
+    @pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+    def test_a_transient_status_is_retried(self, status: int) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((status, b"down", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        assert client.get(DETECTION).status == 200
+        assert sleeps == [client_module.TRANSIENT_BACKOFF_SECONDS[0]] and len(adapter.seen) == 2
+
+    def test_retries_are_bounded_and_then_fail_with_the_status(self) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((503, b"down", {}), sleeps=sleeps)
+        with pytest.raises(ReadFailed) as caught:
+            client.get(DETECTION)
+        assert caught.value.status == 503
+        assert len(adapter.seen) == client_module.MAX_TRANSIENT_RETRIES + 1
+        assert sleeps == list(client_module.TRANSIENT_BACKOFF_SECONDS)
+
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    def test_other_errors_are_not_retried(self, status: int) -> None:
+        sleeps: list[float] = []
+        client, adapter = make((status, b"no", {}), sleeps=sleeps)
+        with pytest.raises(ReadFailed):
+            client.get(DETECTION)
+        assert sleeps == [] and len(adapter.seen) == 1
+
+    @pytest.mark.parametrize("error", [requests.ConnectionError("reset"), requests.ReadTimeout("slow"), requests.ConnectTimeout("no route")])
+    def test_a_network_error_is_retried(self, error: Exception) -> None:
+        sleeps: list[float] = []
+        adapter = Raising(error, (200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=sleeps.append)
+        assert client.get(DETECTION).body == b"<x/>" and len(sleeps) == 1
+
+    def test_a_persistent_network_error_is_raised_as_itself(self) -> None:
+        adapter = Raising(requests.ConnectionError("reset"))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None)
+        with pytest.raises(requests.ConnectionError):
+            client.get(DETECTION)
+        assert len(adapter.seen) == client_module.MAX_TRANSIENT_RETRIES + 1
+
+    def test_a_body_cut_short_is_retried_and_observed(self) -> None:
+        seen = []
+
+        class Cut(FakeAdapter):
+            def send(self, request, **kwargs):
+                response = super().send(request, **kwargs)
+                if len(self.seen) == 1:
+                    response.raw = _CutBody()
+                return response
+
+        adapter = Cut((200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None, observer=seen.append)
+        assert client.get(DETECTION).body == b"<x/>"
+        assert [e.body_not_read for e in seen] == ["ChunkedEncodingError", None]
+
+    def test_retries_off_fails_on_the_first_answer(self) -> None:
+        client, adapter = make((502, b"down", {}), (200, b"<x/>", {}), retry_transient=False)
+        with pytest.raises(ReadFailed):
+            client.get(DETECTION)
+        assert len(adapter.seen) == 1
+
+    def test_transient_and_throttle_waits_share_one_budget(self, monkeypatch) -> None:
+        monkeypatch.setattr(client_module, "MAX_WAIT_TOTAL_SECONDS", 20)
+        sleeps: list[float] = []
+        client, adapter = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "10"}), (502, b"", {}), (502, b"", {}), (200, b"<x/>", {}), sleeps=sleeps)
+        with pytest.raises(ReadFailed):
+            client.get(DETECTION)
+        assert sleeps == [10.0, 5.0] and len(adapter.seen) == 3  # the next backoff (30s) would pass the budget
+
+    def test_a_refusal_is_never_retried(self) -> None:
+        client, adapter = make((200, b"<x/>", {}))
+        with pytest.raises(TransportRefused):
+            client.get(f"{HOST}/api/2.0/fo/session/?action=login")
+        assert adapter.seen == []
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestConcurrencyWaitFloor:
+    """unified-systems-com/qualys-tap#48: a 1960 wait whose header says 0 still waits."""
+
+    @pytest.mark.parametrize("header", ["0", "1", None])
+    def test_a_1960_wait_is_at_least_the_floor(self, header: str | None) -> None:
+        sleeps: list[float] = []
+        headers = {} if header is None else {"X-RateLimit-ToWait-Sec": header}
+        client, _ = make((409, CONCURRENCY, headers), (200, b"<x/>", {}), sleeps=sleeps)
+        client.get(DETECTION)
+        assert sleeps == [max(client_module.CONCURRENCY_WAIT_FLOOR_SECONDS, float(header or client_module.DEFAULT_WAIT_SECONDS))]
+
+    def test_a_1965_wait_still_follows_its_header(self) -> None:
+        sleeps: list[float] = []
+        client, _ = make((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "2"}), (200, b"<x/>", {}), sleeps=sleeps)
+        client.get(DETECTION)
+        assert sleeps == [2.0]
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestCeilingBoundsAttemptsNotWaits:
+    """unified-systems-com/qualys-tap#49: the per-request ceiling is around each attempt; the waits are outside it."""
+
+    def test_each_attempt_is_bounded_and_no_wait_is_inside(self) -> None:
+        inside, events = [False], []
+
+        def bound(attempt):
+            inside[0] = True
+            try:
+                events.append("attempt")
+                return attempt()
+            finally:
+                inside[0] = False
+
+        def sleep(seconds: float) -> None:
+            assert not inside[0], "a wait ran inside the ceiling"
+            events.append("sleep")
+
+        adapter = FakeAdapter((409, THROTTLED, {"X-RateLimit-ToWait-Sec": "600"}), (502, b"", {}), (200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=sleep)
+        assert client.get(DETECTION, bound=bound).status == 200
+        assert events == ["attempt", "sleep", "attempt", "sleep", "attempt"]
+
+    def test_an_attempt_past_the_ceiling_is_not_retried_and_its_session_is_dropped(self) -> None:
+        client, adapter = make((200, b"<x/>", {}))
+        before = client._session
+
+        def timed_out(attempt):
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=timed_out)
+        assert adapter.seen == [] and client._session is not before
+        assert client.get(DETECTION).status == 200  # the new session works, and the lock was released

@@ -11,8 +11,18 @@ a 3xx is an error.
 Authentication is HTTP Basic with the ``X-Requested-With`` header Qualys requires; the credential reaches
 ``requests`` as an auth tuple, never in a URL, and no ``__repr__`` shows it. Calls are serial (one session,
 one request at a time). A 409 waits only for Qualys's throttling codes (1960 concurrency, 1965 rate), honouring
-``X-RateLimit-ToWait-Sec`` within a bounded count and total time; any other 409 is an error. A body is read
-in chunks and refused past the page ceiling.
+``X-RateLimit-ToWait-Sec`` within a bounded count and total time; any other 409 is an error. A 1960 wait is at
+least ``CONCURRENCY_WAIT_FLOOR_SECONDS``, because the header has been reported as 0 for it
+(unified-systems-com/qualys-tap#48). A transient failure (a 429 or 5xx in ``TRANSIENT_STATUSES``, a refused
+or reset connection, a read timeout, a body cut short) is retried up to ``MAX_TRANSIENT_RETRIES`` times with a
+growing backoff, inside the same total wait bound (unified-systems-com/qualys-tap#47). A body is read in chunks
+and refused past the page ceiling.
+
+``get`` takes an optional ``bound``, which runs one attempt (the request and its body) under the caller's
+wall-clock ceiling. Waits and backoff happen between attempts, outside it, so the ceiling bounds a request and
+the wait budget bounds the waiting (unified-systems-com/qualys-tap#49). An attempt abandoned at the ceiling is
+not retried; the client drops the session that attempt holds and builds a new one, so nothing later shares a
+connection pool with a thread that may still be running.
 
 Two more reads are on the list for the observation command (req-qualys-observe): the two output DTDs, each a
 GET with no parameters at all. An anonymous client, which holds no credential, may send only those two, so
@@ -20,6 +30,7 @@ the command can ask whether Qualys serves them without one. An optional observer
 (status, response headers, the names of the request headers, and the body) so the command can record it.
 """
 
+import functools
 import http.cookiejar
 import math
 import re
@@ -96,6 +107,15 @@ THROTTLE_CODES = {"1960", "1965"}
 MAX_RETRIES = 8
 MAX_WAIT_TOTAL_SECONDS = 1800
 DEFAULT_WAIT_SECONDS = 60
+#: The least a 1960 (concurrency) wait sleeps: XSOAR's integration reports the header as 0 for 1960 and waits a
+#: fixed 60s (Qualysv2.py:64-70), one vendor comment and no Qualys statement, so this is a floor, not a constant.
+CONCURRENCY_WAIT_FLOOR_SECONDS = 30.0
+#: Answers worth asking again: too many requests, and the server-side failures a retry can outlast.
+TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+#: Network failures worth asking again; anything else requests raises (an invalid URL, a TLS refusal) is not.
+TRANSIENT_ERRORS: tuple[type[Exception], ...] = (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError)
+MAX_TRANSIENT_RETRIES = 3
+TRANSIENT_BACKOFF_SECONDS = (5.0, 30.0, 120.0)
 CONNECT_TIMEOUT = 15
 READ_TIMEOUT = 300
 
@@ -220,28 +240,42 @@ class ReadOnlyClient:
         adapter: HTTPAdapter | None = None,
         sleep: Callable[[float], None] = time.sleep,
         observer: Observer | None = None,
+        retry_transient: bool = True,
         _anonymous: bool = False,
     ) -> None:
         if not _anonymous and not (username and password):
             raise TransportRefused("a credentialed client needs a username and a password; use ReadOnlyClient.anonymous for none")
         self._root = canonical_api_host(api_host)
         self._verify: bool | str = ca_bundle or True
-        self._session = _GuardedSession(self._root, self._verify)
-        self._session.auth = None if _anonymous else (username, password)
+        self._auth = None if _anonymous else (username, password)
+        self._adapter = adapter
+        self._session = self._new_session()
         self._observer = observer
-        self._session.headers.update({"X-Requested-With": USER_AGENT, "User-Agent": USER_AGENT})
-        if adapter is not None:
-            self._session.mount("https://", adapter)
+        self._retry_transient = retry_transient
         self._sleep = sleep
         # Calls are serial: one request (and its throttling waits) at a time, whatever the caller's threads do.
         self._lock = threading.Lock()
 
+    def _new_session(self) -> _GuardedSession:
+        session = _GuardedSession(self._root, self._verify)
+        session.auth = self._auth
+        session.headers.update({"X-Requested-With": USER_AGENT, "User-Agent": USER_AGENT})
+        if self._adapter is not None:
+            session.mount("https://", self._adapter)
+        return session
+
     @classmethod
     def anonymous(
-        cls, api_host: str, *, ca_bundle: str | None = None, adapter: HTTPAdapter | None = None, observer: Observer | None = None
+        cls,
+        api_host: str,
+        *,
+        ca_bundle: str | None = None,
+        adapter: HTTPAdapter | None = None,
+        observer: Observer | None = None,
+        retry_transient: bool = True,
     ) -> ReadOnlyClient:
         """A client with no credential at all, which may read only the DTDs (req-qualys-observe)."""
-        return cls(api_host, "", "", ca_bundle=ca_bundle, adapter=adapter, observer=observer, _anonymous=True)
+        return cls(api_host, "", "", ca_bundle=ca_bundle, adapter=adapter, observer=observer, retry_transient=retry_transient, _anonymous=True)
 
     def __repr__(self) -> str:
         return f"ReadOnlyClient({self._root})"
@@ -250,45 +284,56 @@ class ReadOnlyClient:
     def root(self) -> str:
         return self._root
 
-    def get(self, url: str) -> Response:
-        """One allowlisted read, waiting out Qualys's throttling within the bounds."""
+    def get(self, url: str, *, bound: Bound | None = None) -> Response:
+        """One allowlisted read, waiting out Qualys's throttling and transient failures within the bounds.
+
+        ``bound``, when given, runs each attempt under the caller's ceiling; the waits between attempts are not
+        inside it. A ``TimeoutError`` from it ends the read: the attempt is abandoned, not retried.
+        """
         check_url(url, self._root)
         with self._lock:
-            return self._get(url)
+            return self._get(url, bound)
 
-    def _get(self, url: str) -> Response:
-        waited = 0.0
-        for attempt in range(MAX_RETRIES + 1):
-            prepared = self._session.prepare_request(requests.Request("GET", url))
-            raw = self._session.send(
-                prepared,
-                verify=self._verify,
-                allow_redirects=False,
-                stream=True,
-                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-            )
+    def _get(self, url: str, bound: Bound | None) -> Response:
+        waited, transient = 0.0, 0
+        for attempt in range(MAX_RETRIES + MAX_TRANSIENT_RETRIES + 1):
+            session = self._session
             try:
-                body = self._read(raw)
-            except (ReadFailed, requests.RequestException) as exc:
-                self._observe(url, raw, prepared, b"", type(exc).__name__ if not isinstance(exc, ReadFailed) else str(exc))
+                outcome = bound(functools.partial(_attempt, session, url, self._verify)) if bound else _attempt(session, url, self._verify)
+            except TimeoutError:
+                # The abandoned attempt may still be running on this session; nothing later may share it.
+                self._session = self._new_session()
                 raise
-            finally:
-                raw.close()
-            self._observe(url, raw, prepared, body, None)
-            headers = {k: v for k, v in raw.headers.items() if _RECORDED.match(k)}
-            if raw.status_code == 200:
-                return Response(url=url, status=200, body=body, headers=headers, waits=attempt)
-            if raw.status_code == 409 and _return_code(body) in THROTTLE_CODES:
-                wait = _wait_seconds(raw.headers)
-                if attempt == MAX_RETRIES or waited + wait > MAX_WAIT_TOTAL_SECONDS:
-                    raise ReadFailed("throttled past the retry bound", status=409)
-                self._sleep(wait)
-                waited += wait
-                continue
-            if 300 <= raw.status_code < 400:
-                raise ReadFailed("Qualys answered with a redirect, which is never followed", status=raw.status_code)
-            raise ReadFailed(f"Qualys answered HTTP {raw.status_code}", status=raw.status_code)
-        raise ReadFailed("throttled past the retry bound", status=409)  # unreachable; the loop returns or raises
+            if outcome.raw is not None:
+                self._observe(url, outcome.raw, outcome.prepared, outcome.body, outcome.not_read)
+            wait: float | None = None
+            if outcome.error is not None:
+                if not (self._retry_transient and isinstance(outcome.error, TRANSIENT_ERRORS)):
+                    raise outcome.error
+                wait, transient = _backoff(transient), transient + 1
+            else:
+                raw = outcome.raw
+                assert raw is not None
+                headers = {k: v for k, v in raw.headers.items() if _RECORDED.match(k)}
+                if raw.status_code == 200:
+                    return Response(url=url, status=200, body=outcome.body, headers=headers, waits=attempt)
+                if raw.status_code == 409 and (code := _return_code(outcome.body)) in THROTTLE_CODES:
+                    wait = _wait_seconds(raw.headers)
+                    if code == "1960":
+                        wait = max(wait, CONCURRENCY_WAIT_FLOOR_SECONDS)
+                    if attempt - transient >= MAX_RETRIES:
+                        raise ReadFailed("throttled past the retry bound", status=409)
+                elif self._retry_transient and raw.status_code in TRANSIENT_STATUSES:
+                    wait, transient = _backoff(transient), transient + 1
+                elif 300 <= raw.status_code < 400:
+                    raise ReadFailed("Qualys answered with a redirect, which is never followed", status=raw.status_code)
+                else:
+                    raise ReadFailed(f"Qualys answered HTTP {raw.status_code}", status=raw.status_code)
+            if wait is None or waited + wait > MAX_WAIT_TOTAL_SECONDS:
+                raise _exhausted(outcome)
+            self._sleep(wait)
+            waited += wait
+        raise ReadFailed("retried past the bound")  # unreachable: the counts above end the loop first
 
     def _observe(self, url: str, raw: requests.Response, prepared: requests.PreparedRequest, body: bytes, not_read: str | None) -> None:
         if self._observer is None:
@@ -302,15 +347,61 @@ class ReadOnlyClient:
             body_not_read=not_read,
         ))
 
-    @staticmethod
-    def _read(raw: requests.Response) -> bytes:
-        chunks, total = [], 0
-        for chunk in raw.iter_content(chunk_size=1 << 16):
-            total += len(chunk)
-            if total > MAX_PAGE_BYTES:
-                raise ReadFailed(f"response larger than {MAX_PAGE_BYTES} bytes")
-            chunks.append(chunk)
-        return b"".join(chunks)
+
+
+def _read(raw: requests.Response) -> bytes:
+    chunks, total = [], 0
+    for chunk in raw.iter_content(chunk_size=1 << 16):
+        total += len(chunk)
+        if total > MAX_PAGE_BYTES:
+            raise ReadFailed(f"response larger than {MAX_PAGE_BYTES} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@dataclass
+class _Outcome:
+    """One attempt, returned rather than applied, so an attempt run on another thread changes nothing it does not own."""
+
+    prepared: requests.PreparedRequest
+    raw: requests.Response | None = None
+    body: bytes = b""
+    not_read: str | None = None
+    error: Exception | None = None
+
+
+def _attempt(session: requests.Session, url: str, verify: bool | str) -> _Outcome:
+    """Send one request and read its body. Network errors come back in the outcome; only refusals raise."""
+    prepared = session.prepare_request(requests.Request("GET", url))
+    try:
+        raw = session.send(prepared, verify=verify, allow_redirects=False, stream=True, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+    except requests.RequestException as exc:
+        return _Outcome(prepared, error=exc)
+    try:
+        return _Outcome(prepared, raw, _read(raw))
+    except ReadFailed as exc:
+        return _Outcome(prepared, raw, not_read=str(exc), error=exc)
+    except requests.RequestException as exc:
+        return _Outcome(prepared, raw, not_read=type(exc).__name__, error=exc)
+    finally:
+        raw.close()
+
+
+Bound = Callable[[Callable[[], _Outcome]], _Outcome]
+
+
+def _backoff(transient: int) -> float | None:
+    """The wait before the next try of a transient failure; None once the retries are spent."""
+    return TRANSIENT_BACKOFF_SECONDS[transient] if transient < MAX_TRANSIENT_RETRIES else None
+
+
+def _exhausted(outcome: _Outcome) -> Exception:
+    if outcome.raw is not None and outcome.raw.status_code == 409:
+        return ReadFailed("throttled past the retry bound", status=409)
+    if outcome.error is not None:
+        return outcome.error  # the network error itself, so the caller records its type
+    status = outcome.raw.status_code if outcome.raw is not None else None
+    return ReadFailed(f"Qualys answered HTTP {status}, past the transient retry bound", status=status)
 
 
 def _return_code(body: bytes) -> str | None:

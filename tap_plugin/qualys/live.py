@@ -34,7 +34,8 @@ TRUNCATION_LIMIT = 1000
 KB_CHUNK = 300
 #: Ceilings: per request (the transport's own timeouts bound inactivity, not the whole attempt), per run, and
 #: pages per walk. A walk stopped by one is recorded incomplete, never as a short subscription. The run ceiling
-#: is checked before each request starts, so a run ends within RUN_CEILING_SECONDS + READ_CEILING_SECONDS.
+#: is checked before each request starts. The per-request ceiling bounds each attempt, not the waits between
+#: attempts, which the transport bounds by MAX_WAIT_TOTAL_SECONDS (unified-systems-com/qualys-tap#49).
 READ_CEILING_SECONDS = 900.0
 RUN_CEILING_SECONDS = 4 * 3600.0
 MAX_DETECTION_PAGES = 5000
@@ -143,7 +144,17 @@ class LiveRead:
     requests: int = 0
 
 
-Bounded = Callable[[Callable[[], Response], str], Response]
+#: Runs one attempt under the per-request ceiling, raising TimeoutError past it. The client calls it per attempt,
+#: so the waits between attempts are outside it (unified-systems-com/qualys-tap#49).
+Bounded = Callable[[Callable[[], Any], str], Any]
+
+
+def _get(client: ReadOnlyClient, url: str, bounded: Bounded, what: str) -> Response:
+    return client.get(url, bound=functools.partial(_bound_attempt, bounded, what))
+
+
+def _bound_attempt(bounded: Bounded, what: str, attempt: Callable[[], Any]) -> Any:
+    return bounded(attempt, what)
 
 
 def _limits(headers: dict[str, str]) -> dict[str, str | None]:
@@ -171,7 +182,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
     # The probe: an ordinary allowlisted read of one host. A refused credential, a scope Qualys rejects, or a
     # body that is not a detection document ends the run before anything is written (req-qualys-probe-2, -detection-read-5).
     try:
-        reply = bounded(functools.partial(client.get, detection_url(client.root, scope, the_plan.window_start, limit=1)), "probe")
+        reply = _get(client, detection_url(client.root, scope, the_plan.window_start, limit=1), bounded, "probe")
         probe_page = parse_detection_page(reply.body)
     # Fixed messages only: nothing a response said, and no exception's own text, reaches the run's record.
     except ReadFailed as exc:
@@ -199,7 +210,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             break
         number = len(result.pages) + 1
         try:
-            reply = bounded(functools.partial(client.get, url), f"detections-{number}")
+            reply = _get(client, url, bounded, f"detections-{number}")
             page = parse_detection_page(reply.body)
         except (ReadFailed, TransportRefused, PageRefused, TimeoutError) as exc:
             result.walk_complete = False
@@ -233,7 +244,7 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
                 result.knowledgebase_complete = False
                 break
             try:
-                reply = bounded(functools.partial(client.get, knowledgebase_url(client.root, remaining)), "knowledgebase")
+                reply = _get(client, knowledgebase_url(client.root, remaining), bounded, "knowledgebase")
                 kb_page = parse_knowledgebase_page(reply.body)
             except (ReadFailed, TransportRefused, PageRefused, TimeoutError):
                 result.knowledgebase_complete = False

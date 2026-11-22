@@ -25,3 +25,22 @@ jobs:
           persist-credentials: false  # never leave the job token readable in .git config
       - name: Compare the DTDs Qualys serves with the committed sources
         run: python3 -m tap_plugin.qualys.contract.drift served --host https://qualysapi.qualys.com
+  elastic-fixtures:
+    # Our parsers over Elastic's qualys_vmdr mock pages (unified-systems-com/qualys-tap#45). Elastic License 2.0,
+    # so fetched at a pinned commit and refused unless its SHA-256 matches, never committed here. defusedxml is
+    # installed by hash into a throwaway venv; nothing else is.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false  # never leave the job token readable in .git config
+      - name: Install the parser's one dependency, by hash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet --no-deps --only-binary :all: --require-hashes \
+            -r tap_plugin/qualys/contract/elastic-requirements.txt
+      - name: Parse Elastic's pages at the pinned commit
+        run: '"$RUNNER_TEMP/venv/bin/python" -m tap_plugin.qualys.contract.elastic'

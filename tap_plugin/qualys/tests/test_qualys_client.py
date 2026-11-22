@@ -455,3 +455,44 @@ class TestReviewRound1:
         from tap_cares.collectors import CeilingExceeded
 
         assert issubclass(CeilingExceeded, TimeoutError)  # so the swap runs when observe's run_with_ceiling raises it
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound2:
+    """PR #62 round 2 (Grok): an attempt abandoned at the ceiling must not run beside the next request."""
+
+    def test_reads_are_refused_while_an_abandoned_attempt_runs(self) -> None:
+        import threading
+
+        release, entered = threading.Event(), threading.Event()
+
+        class Hanging(FakeAdapter):
+            def send(self, request, **kwargs):
+                if len(self.seen) == 0:
+                    self.seen.append(request)
+                    entered.set()
+                    release.wait(5)
+                    raise requests.ConnectionError("gave up")
+                return super().send(request, **kwargs)
+
+        adapter = Hanging((200, b"<x/>", {}))
+        client = ReadOnlyClient(HOST, "acme_ro", "s3cret-pw", adapter=adapter, sleep=lambda s: None)
+
+        def ceiling(attempt):  # what run_with_ceiling does: start the attempt on a thread, give up on it
+            threading.Thread(target=attempt, daemon=True).start()
+            entered.wait(5)
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=ceiling)
+        with pytest.raises(ReadFailed, match="still running"):
+            client.get(DETECTION)
+        assert len(adapter.seen) == 1  # the refused read sent nothing
+
+        release.set()
+        for _ in range(100):
+            if client._abandoned and client._abandoned[1].is_set():
+                break
+            import time as _t
+            _t.sleep(0.01)
+        assert client.get(DETECTION).status == 200  # serial again once the abandoned attempt has ended

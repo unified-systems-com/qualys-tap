@@ -71,6 +71,7 @@ ALLOWLIST: dict[str, dict[str, Callable[[str], bool]]] = {
         "host_metadata": _pinned("ec2"),
         "show_cloud_tags": _pinned("1"),
         "show_qds": _pinned("1"),
+        "show_qds_factors": _pinned("1"),
         "truncation_limit": _shape(_DIGITS),
         "id_min": _shape(_DIGITS),
         "vm_processed_after": _shape(_ISO_TIME),

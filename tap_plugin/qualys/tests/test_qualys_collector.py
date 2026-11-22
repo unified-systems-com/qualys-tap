@@ -387,3 +387,75 @@ def test_a_live_run_lands_what_qualys_load_lands_for_the_same_pages(secrets, mon
     call_command("qualys_load", str(archive), subscription="acme-file", stdout=io.StringIO())
     assert Entity.objects.count() > before
     assert snapshot("acme-file") == live_graph
+
+
+class Breaking(Router):
+    """A Router whose chosen request raises a network error instead of answering, as a reset or timeout would."""
+
+    def __init__(self, where: str, error: Exception, **overrides: Any) -> None:
+        super().__init__(**overrides)
+        self.where, self.error = where, error
+
+    def send(self, request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
+        parts = urlsplit(request.url)
+        query = parse_qs(parts.query)
+        hit = {
+            "probe": parts.path == DETECTION_PATH and query.get("truncation_limit") == ["1"],
+            "page2": parts.path == DETECTION_PATH and "id_min" in query,
+            "kb": parts.path == KNOWLEDGEBASE_PATH,
+        }[self.where]
+        if hit:
+            self.seen.append(request)
+            raise self.error
+        return super().send(request, **kwargs)
+
+
+@pytest.mark.django_db
+class TestNetworkErrorsKeepWhatWasRead:
+    """unified-systems-com/qualys-tap#46: a network error is a failed page, not a failed subscription."""
+
+    @pytest.mark.parametrize("error", [requests.ConnectionError("reset"), requests.ReadTimeout("slow"), requests.exceptions.ChunkedEncodingError("cut")])
+    def test_a_network_error_mid_walk_keeps_the_pages_read(self, secrets, monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+        collector = _collector(monkeypatch, Breaking("page2", error))
+        collector.run()
+        assert "SUBSCRIPTION_FAILED" not in _codes(collector, "error")
+        assert "WALK_INCOMPLETE" in _codes(collector, "warn")
+        assert QualysHost.objects.filter(subscription_key=KEY, host_id="1001").exists()
+        assert QualysSubscription.objects.get(subscription_key=KEY).watermark is None
+        assert {"scope": "detection page 2", "reason": f"not read: {type(error).__name__}"} in _run_row().scopes_not_read
+
+    def test_a_network_error_in_the_knowledge_base_leaves_qids_unobserved(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_plugin.qualys.models import QualysQid
+
+        collector = _collector(monkeypatch, Breaking("kb", requests.ConnectionError("reset")))
+        collector.run()
+        assert "SUBSCRIPTION_FAILED" not in _codes(collector, "error")
+        assert set(QualysQid.objects.filter(subscription_key=KEY).values_list("kb_returned", flat=True)) == {None}
+
+    def test_a_network_error_on_the_probe_is_a_failed_probe(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        collector = _collector(monkeypatch, Breaking("probe", requests.ConnectionError("reset by 203.0.113.9")))
+        with pytest.raises(QualysCollectorError):
+            collector.run()
+        assert "PROBE_FAILED" in _codes(collector, "error") and "SUBSCRIPTION_FAILED" not in _codes(collector, "error")
+        assert "203.0.113.9" not in json.dumps(collector.results)  # a fixed message, never the exception's text
+        assert not QualysScanRun.objects.exists()
+
+
+@pytest.mark.django_db
+class TestQdsAsReturned:
+    """unified-systems-com/qualys-tap#50 (the factors are asked for) and #51 (the severity attribute is kept)."""
+
+    def test_every_detection_read_asks_for_the_factors(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        router = Router()
+        _collector(monkeypatch, router).run()
+        detection_reads = [r for r in router.seen if urlsplit(r.url).path == DETECTION_PATH]
+        assert len(detection_reads) >= 3  # probe, page 1, page 2
+        assert all(parse_qs(urlsplit(r.url).query).get("show_qds_factors") == ["1"] for r in detection_reads)
+
+    def test_the_qds_severity_is_stored_beside_the_score(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        _collector(monkeypatch, Router()).run()
+        row = QualysDetection.objects.get(subscription_key=KEY, host_id="1001", qid="6666666", unique_vuln_id="7000001")
+        assert (row.qds, row.qds_severity) == ("57", "MEDIUM")
+        assert row.qds_factors
+        absent = QualysDetection.objects.filter(subscription_key=KEY, qds__isnull=True)
+        assert absent.exists() and not absent.exclude(qds_severity__isnull=True).exists()  # no QDS, no severity: null

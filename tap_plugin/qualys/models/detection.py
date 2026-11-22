@@ -71,6 +71,7 @@ class QualysDetection(BaseModel):
         "is_ignored": _STR_OR_NULL,
         "is_disabled": _STR_OR_NULL,
         "qds": _STR_OR_NULL,
+        "qds_severity": _STR_OR_NULL,
         "qds_factors": {"type": ["array", "null"], "items": {"type": "object"}},
         "results": _STR_OR_NULL,
         "state": {"type": ["string", "null"], "enum": ["open", "resolved", None]},
@@ -117,6 +118,9 @@ class QualysDetection(BaseModel):
     is_ignored = models.CharField(max_length=8, null=True, blank=True, default=None, help_text="IS_IGNORED as returned; stored, not acted on.")
     is_disabled = models.CharField(max_length=8, null=True, blank=True, default=None, help_text="IS_DISABLED as returned; stored, not acted on.")
     qds = models.CharField(max_length=16, null=True, blank=True, default=None, help_text="QDS (Qualys Detection Score) as returned.")
+    qds_severity = models.CharField(
+        max_length=16, null=True, blank=True, default=None, help_text="The QDS element's severity attribute (for example HIGH), as returned."
+    )
     qds_factors = models.JSONField(null=True, blank=True, default=None, help_text="QDS_FACTORS as returned, one object per factor.")
     results = models.TextField(
         null=True, blank=True, default=None, help_text="RESULTS in full, as returned; in no key, digest or index (req-qualys-detection-4)."

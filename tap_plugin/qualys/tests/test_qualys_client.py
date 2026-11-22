@@ -491,8 +491,34 @@ class TestReviewRound2:
 
         release.set()
         for _ in range(100):
-            if client._abandoned and client._abandoned[1].is_set():
+            if client._abandoned and client._abandoned.finished.is_set():
                 break
             import time as _t
             _t.sleep(0.01)
         assert client.get(DETECTION).status == 200  # serial again once the abandoned attempt has ended
+
+
+@pytest.mark.spec("req-qualys-transport-9")
+class TestReviewRound3:
+    """PR #62 round 3 (Codex): an attempt whose thread starts only after the ceiling gave up never sends."""
+
+    def test_an_attempt_started_after_it_was_abandoned_sends_nothing(self) -> None:
+        import threading
+
+        client, adapter = make((200, b"<x/>", {}))
+        late: list = []
+
+        def ceiling(attempt):  # the worker thread has not started when the ceiling gives up
+            late.append(attempt)
+            raise TimeoutError("past the ceiling")
+
+        with pytest.raises(TimeoutError):
+            client.get(DETECTION, bound=ceiling)
+        assert client._abandoned is None  # it never started, so nothing is held
+        outcome = late[0]()  # the late start
+        assert isinstance(outcome.error, TimeoutError) and adapter.seen == []
+        worker = threading.Thread(target=late[0])
+        worker.start()
+        worker.join(5)
+        assert adapter.seen == []  # still nothing sent, however late it runs
+        assert client.get(DETECTION).status == 200 and len(adapter.seen) == 1

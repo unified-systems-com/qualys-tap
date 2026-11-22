@@ -258,8 +258,8 @@ class ReadOnlyClient:
         self._observer = observer
         self._retry_transient = retry_transient
         self._sleep = sleep
-        #: The (started, finished) events of an attempt abandoned at the ceiling, while it may still be running.
-        self._abandoned: tuple[threading.Event, threading.Event] | None = None
+        #: An attempt abandoned at the ceiling that had already started, while it may still be running.
+        self._abandoned: _Attempt | None = None
         # Calls are serial: one request (and its throttling waits) at a time, whatever the caller's threads do.
         self._lock = threading.Lock()
 
@@ -305,23 +305,23 @@ class ReadOnlyClient:
 
     def _get(self, url: str, bound: Bound | None) -> Response:
         if self._abandoned is not None:
-            started, finished = self._abandoned
-            if started.is_set() and not finished.is_set():
+            if not self._abandoned.finished.is_set():
                 # Qualys's concurrency limit is shared by every integration on the subscription; a second request
                 # while the abandoned one may still be in flight would break the serial rule (PR #62 round 2).
                 raise ReadFailed("a request abandoned at the ceiling is still running; reads stay serial until it ends")
             self._abandoned = None
         waited, transient = 0.0, 0
         for attempt in range(MAX_RETRIES + MAX_TRANSIENT_RETRIES + 1):
-            session, started, finished = self._session, threading.Event(), threading.Event()
-            run = functools.partial(_attempt, session, url, self._verify, started, finished)
+            session, state = self._session, _Attempt()
+            run = functools.partial(_attempt, session, url, self._verify, state)
             try:
                 outcome = bound(run) if bound else run()
             except TimeoutError:
                 # The abandoned attempt may still be running on this session; nothing later may share it, and
                 # nothing later may run beside it.
                 self._session = self._new_session()
-                self._abandoned = (started, finished)
+                if state.abandon():  # it started, so it may still be sending: hold every read until it ends
+                    self._abandoned = state
                 raise
             if outcome.raw is not None:
                 self._observe(url, outcome.raw, outcome.prepared, outcome.body, outcome.not_read)
@@ -389,17 +389,39 @@ class _Outcome:
     error: Exception | None = None
 
 
-def _attempt(session: requests.Session, url: str, verify: bool | str, started: threading.Event, finished: threading.Event) -> _Outcome:
-    """Send one request and read its body. Network errors come back in the outcome; only refusals raise.
+class _Attempt:
+    """Whether one attempt has started, been abandoned, or finished: its only effect on anything the caller holds.
 
-    ``started`` and ``finished`` are the attempt's only effect on anything the caller holds: they let the client
-    tell whether an attempt it abandoned is still running.
+    Starting and abandoning are decided under one lock, so exactly one of two things is true once the caller gives
+    up: the attempt had started, and the client holds every read until ``finished`` (PR #62 round 2); or it had
+    not, and it never sends (PR #62 round 3, an attempt whose thread was slow to start).
     """
-    started.set()
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._started = self._abandoned = False
+        self.finished = threading.Event()
+
+    def start(self) -> bool:
+        with self._lock:
+            self._started = not self._abandoned
+            return self._started
+
+    def abandon(self) -> bool:
+        """Mark abandoned; True when the attempt had already started and may still be running."""
+        with self._lock:
+            self._abandoned = True
+            return self._started
+
+
+def _attempt(session: requests.Session, url: str, verify: bool | str, state: _Attempt) -> _Outcome:
+    """Send one request and read its body. Network errors come back in the outcome; only refusals raise."""
+    if not state.start():
+        return _Outcome(requests.PreparedRequest(), error=TimeoutError("abandoned before it started"))  # never sent
     try:
         return _send_and_read(session, url, verify)
     finally:
-        finished.set()
+        state.finished.set()
 
 
 def _send_and_read(session: requests.Session, url: str, verify: bool | str) -> _Outcome:

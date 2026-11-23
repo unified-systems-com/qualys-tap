@@ -257,7 +257,9 @@ class TestLoad:
         load_archive(make_archive(tmp_path), "acme", grid=GridStore(), importer=importer, serialize=hold,
                      already_loaded=lambda k, s: events.append("dup-check") or False,
                      newest_read_time=lambda k: events.append("age-check") or None)
-        assert events == [f"hold {KEY}", "dup-check", "age-check", "import", "release"]
+        # Every batch of the chunked write (req-qualys-chunked-write) imports inside the one hold.
+        assert events[:3] == [f"hold {KEY}", "dup-check", "age-check"] and events[-1] == "release"
+        assert set(events[3:-1]) == {"import"} and len(events[3:-1]) >= 3
 
     def test_off_contract_page_writes_nothing(self, tmp_path: Path) -> None:
         bad = _fixture("hld-ec2-assembled.xml").replace(b"<ID>1001</ID>", b"")

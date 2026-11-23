@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from django.db import models
 
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 
 _STR_OR_NULL = {"type": ["string", "null"]}
@@ -59,6 +60,10 @@ class QualysScanRun(BaseModel):
     ENTITY_ICON: ClassVar[str] = "qualys-scan-run"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"qualys.area": "run"}
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("subscription_key", "run_id")
+    # Event time (req-grid-entity-event-time): none. A run is a collection, and its times are the
+    # collector's own clock: collection time, which is never declared (rule 13) and has its own place
+    # (req-grid-entity-collection-time).
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {"nodes": [{"type": "qualys__qualys_subscription"}], "edges": [{"type": "RUN_OF_SUBSCRIPTION__qualys"}]},

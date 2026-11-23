@@ -83,6 +83,7 @@ Eight consequences shape v0:
 | req-qualys-package-link | [Package Link](#package-link) | In Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
 | req-qualys-file-import | [Export Archive Import](#export-archive-import) | In Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
+| req-qualys-event-time | [Event Time](#event-time) | In Development | Each model's event time declared for core's `req-grid-entity-event-time`: a detection's first found time, a QID's published time, none for the rest |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
 | req-qualys-scan-list | Scan List | Backlog | The scans Qualys ran, as nodes a detection's last scan can point at |
 | req-qualys-ignored-disabled | Acting On Ignored And Disabled | Backlog | What a consumer should make of `IS_IGNORED` and `IS_DISABLED`; v0 stores both flags and acts on neither |
@@ -690,6 +691,38 @@ The client is `requests`, which reaches TLS through Python's `ssl` module and th
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
 | req-qualys-fips-1 | Declared And Checked | Proposed | The manifest declares `[fips] status = "compatible"`, and the crypto-providers report finds no bundled OpenSSL in the plugin's closure. | |
+
+### Event Time
+----
+RID: `req-qualys-event-time`
+
+Status: `In Development`
+
+How this plugin's types meet core's event time (`req-grid-entity-event-time` in `tap_grid/specs/spec-grid-entity.md`, tap 0.4.6). Core derives `event_start`, `event_end`, `event_precision` and the `time` dimension from a field a model names; this plugin only names the field. The floor is `requires_tap >= 0.4.6` because of it.
+
+#### Implementation
+
+Qualys returns its times as `YYYY-MM-DDTHH:MM:SSZ` text, one of the FHIR forms core's reader accepts, so the declared fields are the typed fields as returned and the collector converts nothing.
+
+| Type | Declaration | Why |
+| --- | --- | --- |
+| Detection | `Moment(first_found_datetime, first_seen)` | A finding is declared at its creation (core rule 13). Not an interval ending at `LAST_FIXED_DATETIME`: Qualys keeps that value when a fixed detection reopens, so the span would read closed while the detection is active again. |
+| QID | `Moment(published_datetime, published)` | When Qualys published the record. `LAST_SERVICE_MODIFICATION_DATETIME` is Qualys editing its own record and is not declared (core rule 13). |
+| Host | `NO_EVENT_TIME` | Its times are last-scan times, which are last-seen times and stay typed fields (core rule 14). The read carries no time for when the host came to exist. |
+| Scan Run | `NO_EVENT_TIME` | A run is a collection and its times are the collector's own clock: collection time, never declared (core rule 13; `req-grid-entity-collection-time`). |
+| Subscription | `NO_EVENT_TIME` | Configuration; its watermark and last complete read are set by this plugin's reads, not stated by Qualys. |
+
+No edge type carries a time property, so none declares an event time; core's default for an edge type is none.
+
+A value core cannot read is kept in the typed field as Qualys sent it and left off the spine (core rule 12). Qualys's own documented sample carries one, `2019-1108T06:37:29Z`.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | --- | --- | --- |
+| req-qualys-event-time-1 | Every Model Declares | Proposed | Every model declares the event time in the table above, and core's `declaration_problems` finds nothing wrong with any of them. | `TestDeclarations`. |
+| req-qualys-event-time-2 | Derived From Qualys's Text | Proposed | After an import, a detection's spine holds its first found time and a QID's its published time, each at precision `second` with its kind as the `time` dimension; a row whose field is empty, and every type declaring none, holds nothing. | `TestDerivedFromQualysText`. |
+| req-qualys-event-time-3 | Malformed Value Kept, Not Guessed | Proposed | A detection whose first found time is not a readable value keeps the text in its typed field and has no event time. | `TestDerivedFromQualysText.test_a_malformed_time_is_kept_as_sent_and_left_off_the_spine`, on Qualys's documented sample. |
 
 ### v0 Non-Goals
 ----

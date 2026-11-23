@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from django.db import models
 
+from tap_grid.event_time import Moment
 from tap_grid.models import BaseModel
 
 _STR_OR_NULL = {"type": ["string", "null"]}
@@ -30,6 +31,10 @@ class QualysQid(BaseModel):
     ENTITY_ICON: ClassVar[str] = "qualys-qid"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"qualys.area": "knowledge"}
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("subscription_key", "qid")
+    # Event time (req-grid-entity-event-time): when Qualys published the knowledge-base record, as the
+    # text it returned. LAST_SERVICE_MODIFICATION_DATETIME is the source editing its own record and is
+    # not declared while a time for the thing exists (rule 13).
+    EVENT_TIME: ClassVar[Moment] = Moment(field="published_datetime", kind="published")
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {

@@ -5,6 +5,7 @@ from typing import Any, ClassVar
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 from tap_plugin.qualys.identity import InvalidApiHost, canonical_api_host, subscription_key
 
@@ -32,6 +33,9 @@ class QualysSubscription(BaseModel):
     ENTITY_ICON: ClassVar[str] = "qualys-subscription"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"qualys.area": "run"}
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("api_host", "subscription_label")
+    # Event time (req-grid-entity-event-time): none. A subscription is configuration; its watermark and
+    # last complete read are times this plugin's reads set, not times Qualys states.
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
 
     # Nothing goes out from a subscription in v0; runs point at it.
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = []

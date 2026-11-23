@@ -157,6 +157,8 @@ class Result:
     scopes_not_read: list[dict[str, str]] = field(default_factory=list)
     partly_read_pages: int = 0
     read_kind: str = ""  # the kind the run was treated as, after any downgrade
+    #: The subscription's fields as the grid held them before this run, for the opening batch of a chunked write.
+    subscription_held: dict[str, Any] = field(default_factory=dict)
 
     def count(self, name: str, n: int = 1) -> None:
         self.counters[name] = self.counters.get(name, 0) + n
@@ -476,6 +478,12 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         "knowledgebase_api_version": "4.0",
     }
     result.read_kind = read_kind
+    # What the opening batch writes: the subscription as it was, so a run whose seal never lands moves nothing
+    # a later plan reads (the watermark, the last complete read, the standing scope).
+    result.subscription_held = {
+        **sub_fields,
+        "standing_scope": held.get("standing_scope") if stored is not None else None,
+    }
     sub_node = envelope("sub", QualysSubscription, run.label, sub_fields)
     result.nodes.append(sub_node)
 
@@ -604,20 +612,147 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
 
 
 def document(result: Result, run: Run) -> dict[str, Any]:
-    """The GRIFT document for one run: a single batch holding every node and edge it writes."""
+    """The GRIFT document for one run: a single batch holding every node and edge it writes.
+
+    A big run cannot be written this way: core locks every natural key of a batch until it commits
+    (unified-systems-com/tap#1348). The collector and the file load write :func:`documents` instead.
+    """
+    return _document(run, f"Qualys {run.source} read", f"One {result.read_kind or run.read_kind} read of Qualys subscription {run.label}, from {run.source}.",
+                     {"run_id": run.run_id, "counters": result.counters}, result.nodes, result.edges, result.authority)
+
+
+def _document(run: Run, name: str, description: str, data: dict[str, Any], nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
+              authority: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "metadata": {"grift_version": "0"},
         "_reserved": {},
         "batches": [{
-            "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": f"Qualys {run.source} read", "dimensions": {}},
+            "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": name, "dimensions": {}},
             "batch_node": {
                 "source": "tap_plugin.qualys",
-                "name": f"Qualys {run.source} read",
-                "description": f"One {result.read_kind or run.read_kind} read of Qualys subscription {run.label}, from {run.source}.",
-                "description_json": {"format": "tap.qualys.run-v0", "data": {"run_id": run.run_id, "counters": result.counters}},
+                "name": name,
+                "description": description,
+                "description_json": {"format": "tap.qualys.run-v0", "data": data},
             },
-            "nodes": result.nodes,
-            "edges": result.edges,
-            **({"edge_cases": {"authority": result.authority}} if result.authority else {}),
+            "nodes": nodes,
+            "edges": edges,
+            **({"edge_cases": {"authority": authority}} if authority else {}),
         }],
     }
+
+
+#: Identity keys per batch of a chunked write: each node and each edge is about one advisory lock, held until
+#: the batch commits, and Postgres's default lock table is about 6,400 slots for every connection together.
+#: A single host whose own records exceed it is written alone, over the bound (req-qualys-chunked-write-2).
+CHUNK_KEYS = 2000
+_HUBS = ("sub", "run")
+_SHARED_TYPES = frozenset({QualysQid.ENTITY_TYPE, neutral.VULNERABILITY_TYPE, neutral.PACKAGE_TYPE})
+
+
+def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[dict[str, Any]]:
+    """The run as a sequence of GRIFT documents, one batch each, each its own transaction (req-qualys-chunked-write).
+
+    WORKAROUND(unified-systems-com/tap#1348): core locks every natural key of a batch until it commits, so a
+    big run written as one batch exhausts Postgres's lock table. In order:
+
+    1. the opening: the subscription as the grid held it and the run, not yet finished;
+    2. the shared records later batches point at by key (QIDs, vulnerability records, packages);
+    3. everything else in bounded chunks, each a whole group of nodes joined by batch-local refs, so a host,
+       its detections, its findings and their authority claims land together, and so do a tag and its children;
+    4. the seal: the subscription with its new watermark and last complete read, the withdrawals, and the run.
+
+    The edges that name the subscription by ref outside the opening and the seal name it by key instead. A batch
+    that fails stops the write: what committed stays, and the seal, the one batch that moves the watermark or
+    withdraws anything, is never written.
+    """
+    max_keys = CHUNK_KEYS if max_keys is None else max_keys
+    hub_nodes = {n["entity"]["ref"]: n for n in result.nodes if n["entity"]["ref"] in _HUBS}
+    sub, the_run = hub_nodes["sub"], hub_nodes["run"]
+    sub_key = {"api_host": sub["node"]["api_host"], "subscription_label": sub["node"]["subscription_label"]}
+    withdrawn = [n for n in result.nodes if n["entity"]["ref"] not in _HUBS and n["node"].get("withdrawn_in_run") == run.run_id]
+    withdrawn_refs = {n["entity"]["ref"] for n in withdrawn}
+    body = [n for n in result.nodes if n["entity"]["ref"] not in _HUBS and n["entity"]["ref"] not in withdrawn_refs]
+
+    # Group nodes joined by batch-local refs; a ref is meaningful only inside the batch that holds it.
+    parent = {n["entity"]["ref"]: n["entity"]["ref"] for n in body}
+
+    def find(ref: str) -> str:
+        while parent[ref] != ref:
+            parent[ref] = parent[parent[ref]]
+            ref = parent[ref]
+        return ref
+
+    hub_edges: list[dict[str, Any]] = []
+    grouped_edges: list[tuple[str, dict[str, Any]]] = []
+    for e in result.edges:
+        ends = [r for r in (e["edge"].get("from_ref"), e["edge"].get("to_ref")) if r is not None]
+        inner = [r for r in ends if r not in _HUBS]
+        if not inner:
+            hub_edges.append(e)
+            continue
+        if any(r in _HUBS for r in ends):
+            if e["edge"].get("to_ref") != "sub":
+                raise ValueError(f"edge {e['entity']['ref']} names a hub other than the subscription by ref")
+            e = {**e, "edge": {k: v for k, v in e["edge"].items() if k != "to_ref"} | {"to_key": {"entity_type": QualysSubscription.ENTITY_TYPE, "key": sub_key}}}
+        for other in inner[1:]:
+            a, b = find(inner[0]), find(other)
+            if a != b:
+                parent[b] = a
+        grouped_edges.append((inner[0], e))
+
+    groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for n in body:
+        groups.setdefault(find(n["entity"]["ref"]), {"nodes": [], "edges": []})["nodes"].append(n)
+    for ref, e in grouped_edges:
+        groups[find(ref)]["edges"].append(e)
+    # Vulnerability records and packages before the QIDs, whose CVE edges name them by key.
+    shared = sorted((g for g in groups.values() if all(n["entity"]["entity_type"] in _SHARED_TYPES for n in g["nodes"])),
+                    key=lambda g: any(n["entity"]["entity_type"] == QualysQid.ENTITY_TYPE for n in g["nodes"]))
+    rest = [g for g in groups.values() if not all(n["entity"]["entity_type"] in _SHARED_TYPES for n in g["nodes"])]
+
+    chunks: list[dict[str, list[dict[str, Any]]]] = []
+    for kind in (shared, rest):
+        current: dict[str, list[dict[str, Any]]] = {"nodes": [], "edges": []}
+        for g in kind:
+            size = len(g["nodes"]) + len(g["edges"])
+            if current["nodes"] and len(current["nodes"]) + len(current["edges"]) + size > max_keys:
+                chunks.append(current)
+                current = {"nodes": [], "edges": []}
+            current["nodes"].extend(g["nodes"])
+            current["edges"].extend(g["edges"])
+        if current["nodes"]:
+            chunks.append(current)
+
+    # Each authority claim rides with the batch holding its anchor, whose edges are the claim's asserted set. A
+    # claim whose anchor no batch holds would assert nothing, so it is sent partial, which proposes nothing.
+    claims: list[list[dict[str, Any]]] = [[] for _ in chunks]
+    seal_claims: list[dict[str, Any]] = []
+    index: dict[tuple[str, tuple[Any, ...]], int] = {}
+    names_by_type: dict[str, tuple[str, ...]] = {}
+    for claim in result.authority:
+        names_by_type.setdefault(claim["anchor"]["entity_type"], tuple(sorted(claim["anchor"]["key"])))
+    for number, chunk in enumerate(chunks):
+        for n in chunk["nodes"]:
+            names = names_by_type.get(n["entity"]["entity_type"])
+            if names is not None:
+                index[(n["entity"]["entity_type"], tuple(n["node"].get(k) for k in names))] = number
+    for claim in result.authority:
+        anchor = claim["anchor"]
+        at = index.get((anchor["entity_type"], tuple(anchor["key"].get(k) for k in names_by_type[anchor["entity_type"]])))
+        if at is None:
+            seal_claims.append({**claim, "read": "partial"})
+        else:
+            claims[at].append(claim)
+
+    held_sub = {**sub, "node": result.subscription_held}
+    opening_run = {**the_run, "node": {**the_run["node"], "finished_at": None}}
+    total = len(chunks) + 2
+    data = {"run_id": run.run_id, "counters": result.counters}
+    out = [_document(run, f"Qualys {run.source} read, part 1 of {total} (opening)", f"The opening of a {result.read_kind or run.read_kind} read of Qualys subscription {run.label}: the subscription as held, and the run, not yet finished.",
+                     {**data, "part": 1, "parts": total}, [held_sub, opening_run], hub_edges, [])]
+    for number, chunk in enumerate(chunks):
+        out.append(_document(run, f"Qualys {run.source} read, part {number + 2} of {total}", f"Part {number + 2} of a read of Qualys subscription {run.label}.",
+                             {**data, "part": number + 2, "parts": total}, chunk["nodes"], chunk["edges"], claims[number]))
+    out.append(_document(run, f"Qualys {run.source} read, part {total} of {total} (seal)", f"The seal of a {result.read_kind or run.read_kind} read of Qualys subscription {run.label}: the watermark, the withdrawals and the finished run.",
+                         {**data, "part": total, "parts": total}, [sub, *withdrawn, the_run], hub_edges, seal_claims))
+    return out

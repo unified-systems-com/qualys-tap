@@ -26,7 +26,7 @@ from typing import Any
 
 from tap_plugin.qualys.archive import Archive, ArchiveRefused, open_archive, read_snapshot
 from tap_plugin.qualys.contract import drift
-from tap_plugin.qualys.decompose import COMPLETE, Run, decompose, document, parse_time
+from tap_plugin.qualys.decompose import COMPLETE, Run, decompose, documents, parse_time
 from tap_plugin.qualys.identity import canonical_api_host, subscription_key
 from tap_plugin.qualys.parse import PageRefused, parse_detection_page, parse_knowledgebase_page
 
@@ -164,8 +164,12 @@ def _load_held(archive: Archive, api_host: str, label: str, key: str, sha256: st
     run_node = next(n for n in result.nodes if n["entity"]["entity_type"] == "qualys__qualys_scan_run")
     run_node["node"]["warnings"] = drift + run_node["node"]["warnings"]
     run_node["node"]["finished_at"] = now.isoformat()
-    outcome = importer(document(result, run))
-    errors = getattr(outcome, "errors", None)
-    if errors:
-        raise LoadRefused(f"the grid refused the batch: {str(errors)[:500]}")
+    # Several batches, each its own transaction, the seal last (req-qualys-chunked-write): a refused batch stops
+    # the load, so nothing after it, and never the seal, is written.
+    parts = documents(result, run)
+    for number, doc in enumerate(parts, 1):
+        outcome = importer(doc)
+        errors = getattr(outcome, "errors", None)
+        if errors:
+            raise LoadRefused(f"the grid refused batch {number} of {len(parts)}: {str(errors)[:500]}")
     return Loaded(subscription_key=key, run_id=run.run_id, counters=result.counters, warnings=run_node["node"]["warnings"])

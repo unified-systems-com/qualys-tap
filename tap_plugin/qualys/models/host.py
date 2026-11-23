@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from django.db import models
 
+from tap_grid.event_time import NO_EVENT_TIME, NoEventTime
 from tap_grid.models import BaseModel
 
 _STR_OR_NULL = {"type": ["string", "null"]}
@@ -29,6 +30,10 @@ class QualysHost(BaseModel):
     ENTITY_ICON: ClassVar[str] = "qualys-host"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"qualys.area": "observation"}
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("subscription_key", "host_id")
+    # Event time (req-grid-entity-event-time): none. The host's times are when Qualys last scanned it,
+    # which are last-seen times and stay typed fields (rule 14); the read carries no time for when the
+    # host came to exist, which rule 8 would declare.
+    EVENT_TIME: ClassVar[NoEventTime] = NO_EVENT_TIME
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {"nodes": [{"type": "aws_core__aws_ec2_instance"}], "edges": [{"type": "TRACKS_EC2_INSTANCE__qualys"}]},

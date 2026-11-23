@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from django.db import models
 
+from tap_grid.event_time import Moment
 from tap_grid.models import BaseModel
 
 _STR_OR_NULL = {"type": ["string", "null"]}
@@ -33,6 +34,11 @@ class QualysDetection(BaseModel):
     ENTITY_ICON: ClassVar[str] = "qualys-detection"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"qualys.area": "finding"}
     NATURAL_KEY: ClassVar[tuple[str, ...]] = ("subscription_key", "host_id", "qid", "unique_vuln_id")
+    # Event time (req-grid-entity-event-time): when Qualys first found the QID on the host, as the text
+    # it returned. A finding is declared at its creation (rule 13). Not an interval ending at
+    # LAST_FIXED_DATETIME: Qualys keeps that value when a fixed detection reopens, so the span would read
+    # closed while the detection is active again. The other times stay typed fields (rule 14).
+    EVENT_TIME: ClassVar[Moment] = Moment(field="first_found_datetime", kind="first_seen")
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {"nodes": [{"type": "qualys__qualys_host"}], "edges": [{"type": "DETECTED_ON_HOST__qualys"}]},

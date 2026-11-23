@@ -51,6 +51,7 @@ def _assembled() -> bytes:
 
 
 class TestDeclarations:
+    @pytest.mark.spec("req-qualys-event-time-1")
     def test_every_model_declares_and_core_accepts_it(self) -> None:
         expected = {
             QualysDetection: Moment(field="first_found_datetime", kind="first_seen"),
@@ -65,6 +66,7 @@ class TestDeclarations:
 
 
 @pytest.mark.django_db
+@pytest.mark.spec("req-qualys-event-time-2")
 class TestDerivedFromQualysText:
     def test_a_detection_is_first_seen_at_its_first_found_time(self) -> None:
         _load(_assembled())
@@ -95,6 +97,7 @@ class TestDerivedFromQualysText:
                     QualysSubscription.objects.get(subscription_key=KEY)):
             assert _spine(row) == (None, None, None, None), type(row).__name__
 
+    @pytest.mark.spec("req-qualys-event-time-3")
     def test_a_malformed_time_is_kept_as_sent_and_left_off_the_spine(self) -> None:
         # Qualys's own documented sample prints FIRST_FOUND_DATETIME as 2019-1108T06:37:29Z. Core refuses it
         # (rule 12): the typed field keeps the text and the spine stays empty, rather than a guessed date.

@@ -1,6 +1,6 @@
 manifest_version = "0"
 plugin_version = "0.4.0" # x-release-please-version
-requires_tap = ">=0.4.6"
+requires_tap = ">=0.4.8"
 slug = "qualys"
 name = "Qualys TAP"
 description = "Qualys VMDR host detections, from Cloud Agents and scanner appliances, and the QID knowledge base behind them, read-only and held on the grid as Qualys returns them, linked to the AWS EC2 instances they concern."

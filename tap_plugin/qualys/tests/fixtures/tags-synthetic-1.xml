@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic: built from the documented shape of the tag search response (docs.qualys.com/en/am/api/tags/search_tags.htm
+     and get_started/json_support.htm, read 2026-11-23), not captured from a subscription. First of two pages. -->
+<ServiceResponse xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://qualysapi.qg2.apps.qualys.com/qps/xsd/2.0/am/tag.xsd">
+  <responseCode>SUCCESS</responseCode>
+  <count>3</count>
+  <hasMoreRecords>true</hasMoreRecords>
+  <lastId>102</lastId>
+  <data>
+    <Tag>
+      <id>100</id>
+      <name>Production</name>
+      <created>2024-03-01T10:00:00Z</created>
+      <modified>2026-10-02T08:30:00Z</modified>
+      <color>#FF0000</color>
+      <ruleText>asset.installedSoftwares.contains { it.name == "nginx" }</ruleText>
+      <ruleType>GROOVY</ruleType>
+      <children>
+        <list>
+          <SimpleTag><id>101</id><name>Databases</name></SimpleTag>
+          <SimpleTag><id>102</id><name>Web</name></SimpleTag>
+        </list>
+      </children>
+    </Tag>
+    <Tag>
+      <id>101</id>
+      <name>Databases</name>
+      <created>2024-03-01T10:05:00Z</created>
+      <modified>2024-03-01T10:05:00Z</modified>
+      <color>#0000FF</color>
+      <ruleType>NAME_CONTAINS</ruleType>
+      <ruleText>db</ruleText>
+      <children><list/></children>
+    </Tag>
+    <Tag>
+      <id>102</id>
+      <name>Web</name>
+      <created>2024-03-01T10:06:00Z</created>
+      <modified>2024-03-01T10:06:00Z</modified>
+      <color>#00FF00</color>
+      <children><list/></children>
+    </Tag>
+  </data>
+</ServiceResponse>

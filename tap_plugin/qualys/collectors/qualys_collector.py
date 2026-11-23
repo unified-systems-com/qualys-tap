@@ -5,6 +5,9 @@ through the read-only transport (:mod:`tap_plugin.qualys.live`), then, holding t
 submit. The network read takes no database lock; the lock covers only the grid reads decompose makes and the
 import, and is the same one ``qualys_load`` takes, so a file load and a live run never interleave.
 
+Each envelope's ``sources`` switches the detections, the knowledge base and the tags on or off, all on by
+default (req-qualys-sources); a source switched off is recorded on the run as not read.
+
 A subscription that cannot be read fails alone: its probe failing writes nothing for it and is recorded; the
 run fails only when no subscription could be written.
 """
@@ -20,6 +23,7 @@ from tap_plugin.qualys import live
 from tap_plugin.qualys.client import ReadOnlyClient, Response
 from tap_plugin.qualys.credential import Credential, discover
 from tap_plugin.qualys.decompose import Run, decompose, document
+from tap_plugin.qualys.read_kind import NARROWER
 from tap_plugin.qualys.store import GridStore, hold_subscription, newest_read_time
 
 _SITE_RUN_STARTED = "7e3c"
@@ -32,6 +36,7 @@ _SITE_NOTHING_WRITTEN = "49c6"
 _SITE_RUN_FINISHED = "1107"
 _SITE_WALK_INCOMPLETE = "6a6b"
 _SITE_SUBSCRIPTION_FAILED = "6a7a"
+_SITE_TAGS_INCOMPLETE = "c0d1"
 
 #: Tests replace this to serve recorded responses; the default is the real transport.
 client_factory = ReadOnlyClient
@@ -107,17 +112,21 @@ class QualysCollector(CollectorBase):
         username, password = credential.basic
         client = client_factory(credential.api_host, username, password, ca_bundle=credential.ca_bundle)
         try:
-            got = live.read(client, credential.standing_scope, the_plan, bounded=_bounded)
+            got = live.read(client, credential.standing_scope, the_plan, bounded=_bounded, sources=credential.sources)
         except live.ProbeFailed as exc:
             self.record_error(_SITE_PROBE_FAILED, "PROBE_FAILED", f"{credential.qualified}: {exc}; nothing was written for it.", message_data={"credential": credential.qualified})
             return None
-        if not got.walk_complete:
+        detections_on = "detections" not in got.switched_off
+        if detections_on and not got.walk_complete:
             self.record_warn(_SITE_WALK_INCOMPLETE, "WALK_INCOMPLETE", f"{credential.qualified}: the detection walk did not reach its end; what was read is written and the watermark stays.", message_data={"credential": credential.qualified})
+        if got.tags is not None and not got.tags.complete:
+            self.record_warn(_SITE_TAGS_INCOMPLETE, "TAGS_INCOMPLETE", f"{credential.qualified}: the tag list did not reach its end; the tags read are written and none is withdrawn.", message_data={"credential": credential.qualified})
         run = Run(
             api_host=credential.api_host,
             label=credential.label,
             source="api",
-            read_kind=got.read_kind,
+            # With detections switched off nothing of the standing scope was read: never complete, never a window.
+            read_kind=got.read_kind if detections_on else NARROWER,
             started_at=started,
             read_at=started,
             applied_filter=got.applied_filter,
@@ -130,7 +139,13 @@ class QualysCollector(CollectorBase):
             walk_complete=got.walk_complete,
             extra_warnings=got.warnings,
             detection_pages_not_read=got.detection_pages_not_read,
+            tags=got.tags.tags if got.tags is not None else None,
+            tags_complete=got.tags.complete if got.tags is not None else False,
+            tags_not_read=got.tags.not_read if got.tags is not None else [],
+            switched_off=got.switched_off,
         )
+        if got.tags is not None:
+            run.extra_warnings = run.extra_warnings + got.tags.warnings
         with hold_subscription(credential.key):
             newest = newest_read_time(credential.key)
             if newest is not None and newest > started:
@@ -141,7 +156,9 @@ class QualysCollector(CollectorBase):
             result = decompose(run, got.pages, got.kb_pages, GridStore())
             self.submit_grift(document(result, run))
         line = (f"{credential.qualified}: {result.read_kind} read, {len(got.pages)} page(s), {result.counters.get('hosts', 0)} host(s), "
-                f"{result.counters.get('detections', 0)} detection(s), {result.counters.get('neutral_findings', 0)} neutral finding(s); "
-                f"watermark {'advanced' if result.watermark_advanced else 'held'}")
+                f"{result.counters.get('detections', 0)} detection(s), {result.counters.get('neutral_findings', 0)} neutral finding(s), "
+                f"{result.counters.get('tags', 0)} tag(s); "
+                + (f"switched off: {', '.join(got.switched_off)}; " if got.switched_off else "")
+                + f"watermark {'advanced' if result.watermark_advanced else 'held'}")
         self.record_info(_SITE_SUBSCRIPTION_WRITTEN, "SUBSCRIPTION_WRITTEN", line, message_data={"credential": credential.qualified, "counters": result.counters})
         return line

@@ -14,6 +14,10 @@ Resolution follows Qualys alone: a detection is ``resolved`` exactly when Qualys
 otherwise; a detection absent from a read is not written, so it keeps what it had (req-qualys-states-3, -4).
 A host absent from a complete read of the standing scope is rewritten ``withdrawn``; its detections are not
 touched (req-qualys-states-5).
+
+Tags come from the tag search when the run read it (req-qualys-tags). Each tag is written with an edge to its
+subscription and an edge to each child the list also holds. Only a complete list withdraws a held tag it does not
+contain, and only a complete list whose every children list was returned claims the child edges whole.
 """
 
 import uuid
@@ -31,6 +35,7 @@ from tap_plugin.qualys.models.host import QualysHost
 from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
+from tap_plugin.qualys.models.tag import QualysTag
 from tap_plugin.qualys import neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
 from tap_plugin.qualys.read_kind import COMPLETE, NARROWER, WINDOW
@@ -91,6 +96,10 @@ class GridView(Protocol):
 
     def held_qids(self, key: str, qids: Iterable[str]) -> set[str]: ...
 
+    def current_tags(self, key: str) -> dict[str, dict[str, Any]]:
+        """Every tag of the subscription not withdrawn, by tag id, with its stored fields."""
+        ...
+
     def qid_records(self, key: str, qids: Iterable[str]) -> dict[str, dict[str, Any]]:
         """The held QIDs' ``cve_list``, ``cvss_v2`` and ``cvss_v3``, for QIDs the knowledge base did not return this run."""
         ...
@@ -142,6 +151,13 @@ class Run:
     walk_complete: bool | None = None
     extra_warnings: list[dict[str, str]] = field(default_factory=list)
     detection_pages_not_read: list[dict[str, str]] = field(default_factory=list)
+    #: The tags the tag search returned; None when the run did not read tags (switched off, or a file run).
+    tags: list[dict[str, Any]] | None = None
+    #: Whether that list is the whole list: every page read to Qualys's last, and every tag keyable.
+    tags_complete: bool = False
+    tags_not_read: list[dict[str, str]] = field(default_factory=list)
+    #: The sources the envelope switched off (req-qualys-sources), each listed on the run as not read.
+    switched_off: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -224,6 +240,60 @@ _QID_FIELDS = (
     "vuln_type", "severity_level", "title", "category", "patchable", "published_datetime",
     "last_service_modification_datetime",
 )
+
+
+_TAG_FIELDS = (
+    "name", "color", "rule_type", "rule_text", "criticality_score", "description", "created_datetime", "modified_datetime",
+    "parent_tag_id",
+)
+TAG_OF_SUBSCRIPTION = "TAG_OF_SUBSCRIPTION__qualys"
+LISTS_CHILD_TAG = "LISTS_CHILD_TAG__qualys"
+
+
+def _tags(key: str, run: Run, grid: GridView, result: Result) -> None:
+    """The subscription's tags, their subscription and child edges, and the withdrawal of a held tag a complete list lacks."""
+    listed: dict[str, dict[str, Any]] = {}
+    for tag in run.tags or []:
+        tag_id = tag.get("tag_id")
+        if not (_keyable(tag_id, QualysTag, "tag_id") and tag_id.isdigit()):
+            result.count("tags_unkeyable")
+            continue
+        if tag_id in listed:
+            continue
+        fields = {"subscription_key": key, "tag_id": tag_id, **_carry(QualysTag, tag, _TAG_FIELDS, result, f"tag {tag_id}")}
+        children = tag.get("child_tag_ids")
+        fields["child_tag_ids"] = list(children) if children is not None else None
+        fields["state"] = "current"
+        fields["withdrawn_in_run"] = None
+        listed[tag_id] = fields
+        result.nodes.append(envelope(f"t{tag_id}", QualysTag, fields.get("name") or f"tag {tag_id}", fields))
+        result.edges.append(edge(f"e-tag-{tag_id}", TAG_OF_SUBSCRIPTION, f"t{tag_id}", "sub"))
+    result.count("tags", len(listed))
+    for tag_id, fields in listed.items():
+        for child in fields["child_tag_ids"] or []:
+            if isinstance(child, str) and child in listed and child != tag_id:
+                result.edges.append(edge(f"e-child-{tag_id}-{child}", LISTS_CHILD_TAG, f"t{tag_id}", f"t{child}"))
+                result.count("tag_children")
+            else:
+                result.count("tag_children_not_listed")
+    if not run.tags_complete or result.counters.get("tags_unkeyable"):
+        return
+    # A complete list states each tag's whole set of parents only when every tag's children list came back: a tag
+    # whose list was not returned could be a parent nothing here shows. Otherwise the claims say partial.
+    parents_known = all(fields["child_tag_ids"] is not None for fields in listed.values())
+    for tag_id in sorted(listed, key=int):
+        result.authority.append({
+            "edge_type": LISTS_CHILD_TAG,
+            "anchor": {"entity_type": QualysTag.ENTITY_TYPE, "key": {"subscription_key": key, "tag_id": tag_id}},
+            "direction": "inbound",
+            "read": "complete" if parents_known else "partial",
+        })
+    for tag_id, stored in sorted(grid.current_tags(key).items()):
+        if tag_id in listed:
+            continue
+        rewritten = {**stored, "state": "withdrawn", "withdrawn_in_run": run.run_id}
+        result.nodes.append(envelope(f"tw{tag_id}", QualysTag, stored.get("name") or f"tag {tag_id}", rewritten))
+        result.count("tags_withdrawn")
 
 
 def _host_node(ref: str, key: str, record: dict[str, Any], result: Result) -> dict[str, Any]:
@@ -551,6 +621,9 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
 
     _neutral(key, grid, result, run_detections, host_names, {v["qid"]: v for page in kb_pages for v in page.vulns if v.get("qid") in returned})
 
+    if run.tags is not None:
+        _tags(key, run, grid, result)
+
     # Withdrawal, and the record of a complete read: only a complete read with nothing partly read counts.
     # A complete read with no read time cannot say when the data was read, so it records no complete read and
     # withdraws nothing; a live run sets read_at to its own start, a file run to Qualys's response time.
@@ -594,7 +667,12 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
         "probe": run.probe,
         "counters": dict(result.counters),
         "warnings": warnings + run.extra_warnings + _dropped_warnings(result.dropped),
-        "scopes_not_read": run.detection_pages_not_read + result.scopes_not_read,
+        "scopes_not_read": (
+            [{"scope": name, "reason": "switched off"} for name in run.switched_off]
+            + run.detection_pages_not_read
+            + result.scopes_not_read
+            + run.tags_not_read
+        ),
         "archive_sha256": run.archive_sha256,
         "export_created_at": parse_time(run.export_created_at),
     }

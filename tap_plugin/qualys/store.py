@@ -19,8 +19,10 @@ from tap_plugin.qualys.models.host import QualysHost
 from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
+from tap_plugin.qualys.models.tag import QualysTag
 
 _HOST_PAYLOAD = [f.name for f in QualysHost._meta.concrete_fields if f.name in QualysHost.FIELD_CRUD_SCHEMA]
+_TAG_PAYLOAD = [f.name for f in QualysTag._meta.concrete_fields if f.name in QualysTag.FIELD_CRUD_SCHEMA]
 _SUB_PAYLOAD = [f.name for f in QualysSubscription._meta.concrete_fields if f.name in QualysSubscription.FIELD_CRUD_SCHEMA]
 
 
@@ -42,6 +44,10 @@ class GridStore:
     def current_hosts(self, key: str) -> dict[str, dict[str, Any]]:
         rows = QualysHost.objects.filter(subscription_key=key).exclude(state="withdrawn")
         return {row.host_id: _payload(row, _HOST_PAYLOAD) for row in rows}
+
+    def current_tags(self, key: str) -> dict[str, dict[str, Any]]:
+        rows = QualysTag.objects.filter(subscription_key=key).exclude(state="withdrawn")
+        return {row.tag_id: _payload(row, _TAG_PAYLOAD) for row in rows}
 
     def held_qids(self, key: str, qids: Iterable[str]) -> set[str]:
         qids = list(qids)

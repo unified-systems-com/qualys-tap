@@ -1,0 +1,17 @@
+{
+  "slug": "TAG_OF_SUBSCRIPTION__qualys",
+  "name": "Tag Of Subscription",
+  "description": "This asset tag was returned by this Qualys subscription's tag search. One edge per tag, from the tag to the subscription named by the envelope (req-qualys-tags).",
+  "sources": [
+    "qualys__qualys_tag"
+  ],
+  "targets": [
+    "qualys__qualys_subscription"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "tagging"
+  }
+}

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic: built from the documented shape of the tag search response (docs.qualys.com/en/am/api/tags/search_tags.htm,
+     read 2026-11-23), not captured from a subscription. Second and last page; it repeats tag 102, as a page started
+     at an inclusive startFromId would. -->
+<ServiceResponse xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://qualysapi.qg2.apps.qualys.com/qps/xsd/2.0/am/tag.xsd">
+  <responseCode>SUCCESS</responseCode>
+  <count>2</count>
+  <hasMoreRecords>false</hasMoreRecords>
+  <data>
+    <Tag>
+      <id>102</id>
+      <name>Web</name>
+      <created>2024-03-01T10:06:00Z</created>
+      <modified>2024-03-01T10:06:00Z</modified>
+      <color>#00FF00</color>
+      <children><list/></children>
+    </Tag>
+    <Tag>
+      <id>205</id>
+      <name>critical_3</name>
+      <color>#FFFFFF</color>
+      <criticalityScore>3</criticalityScore>
+      <children><list/></children>
+    </Tag>
+  </data>
+</ServiceResponse>

@@ -28,12 +28,13 @@
           },
           "node": {
             "name": "qualys.area",
-            "description": "Which part of Qualys a node or edge describes: run (subscriptions and scan runs), observation (hosts as Qualys tracks them), finding (detections) or knowledge (knowledge-base QID records). Stamped by every qualys node and edge type through DEFAULT_DIMENSIONS or default_dimensions. Not part of any natural key.",
+            "description": "Which part of Qualys a node or edge describes: run (subscriptions and scan runs), observation (hosts as Qualys tracks them), finding (detections), knowledge (knowledge-base QID records) or tagging (the subscription's asset tags). Stamped by every qualys node and edge type through DEFAULT_DIMENSIONS or default_dimensions. Not part of any natural key.",
             "values": [
               "finding",
               "knowledge",
               "observation",
-              "run"
+              "run",
+              "tagging"
             ],
             "usable_in_keys": false
           }

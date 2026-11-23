@@ -2,9 +2,10 @@
 
 Every request leaves through one ``requests.Session`` subclass whose ``send`` decides what may be sent, so
 remounting an adapter or calling ``Session.request`` directly cannot bypass it, and the client never exposes
-its session. ``send`` refuses, before anything is sent: any method but GET; any URL outside the configured API
-host; any path but the allowlisted operations; any parameter the operation does not name, or one in the
-wrong shape; and any per-request override of TLS verification, client certificate or proxies. ``trust_env`` is
+its session. ``send`` refuses, before anything is sent: any method but GET, except the one POST read below;
+any URL outside the configured API host; any path but the allowlisted operations; any parameter the operation
+does not name, or one in the wrong shape; and any per-request override of TLS verification, client
+certificate or proxies. ``trust_env`` is
 off, so no proxy, CA bundle or netrc credential is taken from the environment. Redirects are never followed;
 a 3xx is an error.
 
@@ -25,6 +26,11 @@ not retried; the client drops the session that attempt holds and builds a new on
 connection pool with a thread that may still be running. Until that attempt has finished, every further read is
 refused unsent, so calls stay serial even though the lock is no longer held by the abandoned thread.
 
+One read is a POST, because Qualys offers it in no GET form: the tag search of the Asset Management and
+Tagging API, which lists the subscription's tags (req-qualys-transport-8, req-qualys-tags; ruled 2026-11-23).
+Its body is built here from a fixed template whose only variables are digits, and ``send`` refuses any POST
+whose path, query or body is not exactly that, so the POST can carry no criteria and no write.
+
 Two more reads are on the list for the observation command (req-qualys-observe): the two output DTDs, each a
 GET with no parameters at all. An anonymous client, which holds no credential, may send only those two, so
 the command can ask whether Qualys serves them without one. An optional observer sees every response
@@ -40,7 +46,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import SplitResult, parse_qsl, urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -52,6 +58,10 @@ DETECTION_PATH = "/api/6.0/fo/asset/host/vm/detection/"
 KNOWLEDGEBASE_PATH = "/api/4.0/fo/knowledge_base/vuln/"
 DETECTION_DTD_PATH = "/api/6.0/fo/asset/host/vm/detection/dtd/output.dtd"
 KNOWLEDGEBASE_DTD_PATH = "/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd"
+#: The tag search of the Asset Management and Tagging API: the one POST read (req-qualys-transport-8).
+TAG_SEARCH_PATH = "/qps/rest/2.0/search/am/tag"
+#: Tags per tag-search page: Qualys's documented default, the one size known to be served.
+TAG_PAGE_SIZE = 100
 #: Reads that take no parameters at all; the only ones an anonymous client may send.
 PARAMETERLESS = frozenset({DETECTION_DTD_PATH, KNOWLEDGEBASE_DTD_PATH})
 USER_AGENT = "qualys-tap (read-only collector)"
@@ -60,6 +70,10 @@ _DIGITS = re.compile(r"[0-9]+")
 _ID_LIST = re.compile(r"[0-9]+(,[0-9]+)*")
 _ISO_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _TAG_NAMES = re.compile(r"[^\x00-\x1f]{1,4096}")
+#: The only body a POST may carry: preferences for paging, and nothing that filters, sorts or writes.
+_TAG_SEARCH_BODY = re.compile(
+    rb"<ServiceRequest><preferences>(<startFromId>[0-9]{1,19}</startFromId>)?<limitResults>[0-9]{1,4}</limitResults></preferences></ServiceRequest>"
+)
 
 
 def _pinned(*values: str) -> Callable[[str], bool]:
@@ -104,6 +118,18 @@ ALLOWLIST: dict[str, dict[str, Callable[[str], bool]]] = {
     KNOWLEDGEBASE_DTD_PATH: {},
 }
 
+#: The POST reads: a path and the one body shape it may carry. A change here is a spec change
+#: (req-qualys-transport-8): a POST is admitted only for a read Qualys offers in no GET form.
+POST_READS: dict[str, re.Pattern[bytes]] = {TAG_SEARCH_PATH: _TAG_SEARCH_BODY}
+
+
+def tag_search_body(start_from_id: str | None, limit: int = TAG_PAGE_SIZE) -> bytes:
+    """The tag-search body for one page: from ``start_from_id`` (inclusive or not; the walk copes) or the first."""
+    if start_from_id is not None and not _DIGITS.fullmatch(start_from_id):
+        raise TransportRefused("a tag-search start id is digits only")
+    start = f"<startFromId>{start_from_id}</startFromId>" if start_from_id is not None else ""
+    return f"<ServiceRequest><preferences>{start}<limitResults>{int(limit)}</limitResults></preferences></ServiceRequest>".encode()
+
 #: Qualys's throttling return codes in a 409 body: concurrency and rate (LIM).
 THROTTLE_CODES = {"1960", "1965"}
 MAX_RETRIES = 8
@@ -141,8 +167,7 @@ class OutOfTime(ReadFailed):
     """A read the run's own ceiling ended between attempts: no attempt starts past it, and no wait starts that would reach it."""
 
 
-def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
-    """The operation path and parameters of an allowlisted URL under ``root``; refuse anything else."""
+def _check_origin(url: str, root: str) -> SplitResult:
     parts = urlsplit(url)
     if parts.username is not None or parts.password is not None or parts.fragment:
         raise TransportRefused("a URL with userinfo or a fragment is refused")
@@ -152,6 +177,24 @@ def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
         raise TransportRefused(f"not an https API origin: {exc}") from exc
     if origin != root:
         raise TransportRefused("a URL outside the configured API host is refused")
+    return parts
+
+
+def check_post(url: str, body: Any, root: str) -> str:
+    """The path of an admitted POST read under ``root``, with its body; refuse anything else."""
+    parts = _check_origin(url, root)
+    if parts.path not in POST_READS:
+        raise TransportRefused("only GET is sent, except the allowlisted POST reads")
+    if parts.query:
+        raise TransportRefused(f"the POST to {parts.path} takes no query")
+    if not isinstance(body, bytes) or POST_READS[parts.path].fullmatch(body) is None:
+        raise TransportRefused(f"the POST to {parts.path} carries a body of the wrong shape")
+    return parts.path
+
+
+def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
+    """The operation path and parameters of an allowlisted URL under ``root``; refuse anything else."""
+    parts = _check_origin(url, root)
     if parts.path not in ALLOWLIST:
         raise TransportRefused("a path outside the allowlist is refused")
     if parts.path in PARAMETERLESS:
@@ -175,7 +218,7 @@ def check_url(url: str, root: str) -> tuple[str, dict[str, str]]:
 
 
 class _GuardedSession(requests.Session):
-    """A session whose ``send`` admits only allowlisted GETs to one API host."""
+    """A session whose ``send`` admits only allowlisted GETs, and the allowlisted POST reads, to one API host."""
 
     def __init__(self, root: str, verify: bool | str) -> None:
         super().__init__()
@@ -186,9 +229,13 @@ class _GuardedSession(requests.Session):
         self.cookies.set_policy(http.cookiejar.DefaultCookiePolicy(allowed_domains=[]))
 
     def send(self, request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:  # type: ignore[override]
-        if request.method != "GET":
-            raise TransportRefused("only GET is sent")
-        if request.body is not None:
+        if request.method == "POST":
+            check_post(request.url or "", request.body, self._root)
+            if request.headers.get("Content-Type") != "text/xml":
+                raise TransportRefused("a POST read is sent as text/xml")
+        elif request.method != "GET":
+            raise TransportRefused("only GET is sent, except the allowlisted POST reads")
+        elif request.body is not None:
             raise TransportRefused("a request with a body is refused")
         if kwargs.get("verify") is False or kwargs.get("verify") != self._verify:
             raise TransportRefused("TLS verification cannot be overridden")
@@ -198,7 +245,7 @@ class _GuardedSession(requests.Session):
             raise TransportRefused("a request carrying a cookie is refused")
         if kwargs.get("allow_redirects", True):
             raise TransportRefused("redirects are never followed")
-        path, _ = check_url(request.url or "", self._root)
+        path = urlsplit(request.url or "").path if request.method == "POST" else check_url(request.url or "", self._root)[0]
         # Only a username and a password, both present, make a credentialed client; anything less reads as anonymous.
         credentialed = isinstance(self.auth, tuple) and len(self.auth) == 2 and all(self.auth)
         if not credentialed and path not in PARAMETERLESS:
@@ -310,7 +357,14 @@ class ReadOnlyClient:
         with self._lock:
             return self._get(url, bound, remaining)
 
-    def _get(self, url: str, bound: Bound | None, remaining: Callable[[], float] | None) -> Response:
+    def search_tags(self, start_from_id: str | None, *, bound: Bound | None = None, remaining: Callable[[], float] | None = None) -> Response:
+        """One page of the subscription's tags, by the one POST read; the same waits and bounds as ``get``."""
+        url, body = f"{self._root}{TAG_SEARCH_PATH}", tag_search_body(start_from_id)
+        check_post(url, body, self._root)
+        with self._lock:
+            return self._get(url, bound, remaining, body)
+
+    def _get(self, url: str, bound: Bound | None, remaining: Callable[[], float] | None, body: bytes | None = None) -> Response:
         if self._abandoned is not None:
             if not self._abandoned.finished.is_set():
                 # Qualys's concurrency limit is shared by every integration on the subscription; a second request
@@ -322,7 +376,7 @@ class ReadOnlyClient:
             if remaining is not None and remaining() <= 0:
                 raise OutOfTime("the run's ceiling passed before this attempt")
             session, state = self._session, _Attempt()
-            run = functools.partial(_attempt, session, url, self._verify, state)
+            run = functools.partial(_attempt, session, url, self._verify, state, body)
             try:
                 outcome = bound(run) if bound else run()
             except TimeoutError:
@@ -425,18 +479,21 @@ class _Attempt:
             return self._started
 
 
-def _attempt(session: requests.Session, url: str, verify: bool | str, state: _Attempt) -> _Outcome:
+def _attempt(session: requests.Session, url: str, verify: bool | str, state: _Attempt, body: bytes | None = None) -> _Outcome:
     """Send one request and read its body. Network errors come back in the outcome; only refusals raise."""
     if not state.start():
         return _Outcome(requests.PreparedRequest(), error=TimeoutError("abandoned before it started"))  # never sent
     try:
-        return _send_and_read(session, url, verify)
+        return _send_and_read(session, url, verify, body)
     finally:
         state.finished.set()
 
 
-def _send_and_read(session: requests.Session, url: str, verify: bool | str) -> _Outcome:
-    prepared = session.prepare_request(requests.Request("GET", url))
+def _send_and_read(session: requests.Session, url: str, verify: bool | str, body: bytes | None = None) -> _Outcome:
+    if body is None:
+        prepared = session.prepare_request(requests.Request("GET", url))
+    else:
+        prepared = session.prepare_request(requests.Request("POST", url, data=body, headers={"Content-Type": "text/xml"}))
     try:
         raw = session.send(prepared, verify=verify, allow_redirects=False, stream=True, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
     except requests.RequestException as exc:

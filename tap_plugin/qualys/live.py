@@ -11,6 +11,17 @@ The probe failing ends the read with nothing to write. A page failing later stop
 kept, the walk is recorded incomplete, and the watermark does not move. That holds for a network error
 (a reset, a read timeout) as much as for an HTTP error: neither may discard the pages already read
 (unified-systems-com/qualys-tap#46). Nothing here touches the grid.
+
+Each source (detections, knowledge base, tags) is read only when the envelope leaves it on, which is the
+default (req-qualys-sources). A source switched off is listed on the run as not read, never as empty: with
+detections off the walk is incomplete, so nothing is withdrawn and the watermark stays; with the knowledge base
+off no QID was asked, so a stub's knowledge-base state is unobserved. The probe runs whatever is switched off,
+because it is how the credential is checked.
+
+With tags on, the read ends with the subscription's tags, by the tag search (req-qualys-tags). It pages by tag id until Qualys says there are no
+more, and it is complete only then: a page not read, a page that does not say whether more follow, a page that
+moves nothing forward, a tag below where its page started, or a tag with no usable id leaves it incomplete. A
+failed tag read never touches the detection read.
 """
 
 import functools
@@ -25,7 +36,15 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import requests
 
 from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadFailed, ReadOnlyClient, Response, TransportRefused
-from tap_plugin.qualys.parse import DetectionPage, EmptyBody, KnowledgeBasePage, PageRefused, parse_detection_page, parse_knowledgebase_page
+from tap_plugin.qualys.parse import (
+    DetectionPage,
+    EmptyBody,
+    KnowledgeBasePage,
+    PageRefused,
+    parse_detection_page,
+    parse_knowledgebase_page,
+    parse_tag_page,
+)
 from tap_plugin.qualys.read_kind import COMPLETE, WINDOW
 
 #: How often a complete read is repeated so withdrawal can be judged (req-qualys-detection-read).
@@ -44,6 +63,8 @@ READ_CEILING_SECONDS = 900.0
 RUN_CEILING_SECONDS = 4 * 3600.0
 MAX_DETECTION_PAGES = 5000
 MAX_KB_PAGES_PER_CHUNK = 50
+#: Tag-search pages per run: 200,000 tags at the page size, far past any subscription's tag count.
+MAX_TAG_PAGES = 2000
 _EOS_TEXT = re.compile(r"end[ -]of[ -](support|life)|deprecat", re.I)
 _MAX_WARNING_TEXT = 500
 
@@ -132,6 +153,18 @@ def knowledgebase_url(root: str, qids: list[str]) -> str:
 
 
 @dataclass
+class TagRead:
+    """What the tag search returned: every tag once, by id, and whether the list is the whole list."""
+
+    tags: list[dict[str, Any]] = field(default_factory=list)
+    complete: bool = False
+    pages: int = 0
+    not_read: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+    unkeyable: int = 0
+
+
+@dataclass
 class LiveRead:
     """What one live read returned, and what it could not read."""
 
@@ -147,6 +180,10 @@ class LiveRead:
     warnings: list[dict[str, str]] = field(default_factory=list)
     detection_pages_not_read: list[dict[str, str]] = field(default_factory=list)
     requests: int = 0
+    #: None when the envelope switched tags off; the tags otherwise, complete or not.
+    tags: TagRead | None = None
+    #: The sources the envelope switched off, each recorded on the run as not read (req-qualys-sources).
+    switched_off: list[str] = field(default_factory=list)
 
 
 #: Runs one attempt under the per-request ceiling, raising TimeoutError past it. The client calls it per attempt,
@@ -177,8 +214,73 @@ def _eos(page: DetectionPage | KnowledgeBasePage, where: str) -> dict[str, str] 
     return None
 
 
-def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *, bounded: Bounded, clock: Callable[[], float] = time.monotonic) -> LiveRead:
-    """Probe, then walk the detection pages, then the knowledge base. Raises ProbeFailed when the probe does."""
+def read_tags(client: ReadOnlyClient, *, bounded: Bounded, time_left: Callable[[], float]) -> TagRead:
+    """Every tag the credential can see, page by page by tag id (req-qualys-tags).
+
+    Whether ``startFromId`` includes the id it names is not documented, so the next page starts at the last
+    id seen and a tag already held is skipped: either reading gives every tag once.
+    """
+    got = TagRead()
+    seen: dict[str, dict[str, Any]] = {}
+    start: str | None = None
+    for number in range(1, MAX_TAG_PAGES + 1):
+        if time_left() <= 0:
+            got.warnings.append({"code": "TRUNCATED", "detail": f"the tag search stopped at the run's ceiling after {got.pages} page(s)"})
+            break
+        try:
+            reply = client.search_tags(start, bound=functools.partial(_bound_attempt, bounded, f"tags-{number}"), remaining=time_left)
+            page = parse_tag_page(reply.body)
+        except (ReadFailed, TransportRefused, PageRefused, TimeoutError, requests.RequestException) as exc:
+            got.not_read.append({"scope": f"tag page {number}", "reason": f"not read: {type(exc).__name__}"})
+            break
+        got.pages += 1
+        out_of_order = False
+        new: list[int] = []
+        for tag in page.tags:
+            tag_id = tag.get("tag_id")
+            if not (isinstance(tag_id, str) and tag_id.isdigit() and len(tag_id) <= 32):
+                got.unkeyable += 1
+                continue
+            if tag_id in seen:
+                continue
+            if start is not None and int(tag_id) < int(start):
+                out_of_order = True  # the walk assumes id order; a tag below the start means it may have skipped one
+            seen[tag_id] = tag
+            new.append(int(tag_id))
+        if out_of_order:
+            got.warnings.append({"code": "TRUNCATED", "detail": f"tag page {number} returned a tag below its start id; the list may have gaps"})
+            break
+        if page.has_more is False:
+            got.complete = got.unkeyable == 0
+            break
+        if page.has_more is None:
+            got.warnings.append({"code": "TRUNCATED", "detail": f"tag page {number} did not say whether more tags follow"})
+            break
+        last = int(page.last_id) if page.last_id and page.last_id.isdigit() else max(new, default=None)
+        if not new or last is None or (start is not None and last <= int(start)):
+            got.warnings.append({"code": "TRUNCATED", "detail": f"tag page {number} said more tags follow but moved nothing forward"})
+            break
+        start = str(last)
+    else:
+        got.warnings.append({"code": "TRUNCATED", "detail": f"the tag search stopped at {MAX_TAG_PAGES} pages"})
+    got.tags = list(seen.values())
+    return got
+
+
+def read(
+    client: ReadOnlyClient,
+    scope: dict[str, list[int]],
+    the_plan: Plan,
+    *,
+    bounded: Bounded,
+    clock: Callable[[], float] = time.monotonic,
+    sources: dict[str, bool] | None = None,
+) -> LiveRead:
+    """Probe, then each source switched on: detections, the knowledge base, the tags. Raises ProbeFailed when the probe does.
+
+    ``sources`` None reads detections and the knowledge base and not the tags, for callers that predate the switches.
+    """
+    on = {"detections": True, "knowledgebase": True, "tags": False, **(sources or {})}
     started = clock()
 
     def time_left() -> float:
@@ -208,12 +310,16 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
     result.requests = 1
     if (w := _eos(probe_page, "probe")) is not None:
         result.warnings.append(w)
+    result.switched_off = [name for name in ("detections", "knowledgebase", "tags") if not on[name]]
 
     def out_of_time() -> bool:
         return time_left() <= 0
 
-    # The detection walk.
+    # The detection walk. Switched off, it is not complete, so the read withdraws nothing and the watermark stays.
     url: str | None = detection_url(client.root, scope, the_plan.window_start)
+    if not on["detections"]:
+        result.walk_complete = False
+        url = None
     while url is not None:
         if len(result.pages) >= MAX_DETECTION_PAGES or out_of_time():
             result.walk_complete = False
@@ -243,6 +349,9 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
 
     # The knowledge base, for every QID the pages named, each chunk followed to its end (unified-systems-com/qualys-tap#16).
     named = sorted({d["qid"] for page in result.pages for host in page.hosts for d in host["detections"] if isinstance(d.get("qid"), str) and d["qid"].isdigit()}, key=int)
+    if not on["knowledgebase"]:
+        named = []  # nothing asked, so a QID the grid does not hold stays unobserved, never "not returned"
+        result.knowledgebase_complete = False
     result.knowledgebase_asked = set(named)
     for start in range(0, len(named), KB_CHUNK):
         # A chunk Qualys cuts short is not followed by its link: the QIDs it did not return yet are asked again,
@@ -276,4 +385,8 @@ def read(client: ReadOnlyClient, scope: dict[str, list[int]], the_plan: Plan, *,
             remaining = left
         else:
             result.knowledgebase_complete = False
+
+    if on["tags"]:
+        result.tags = read_tags(client, bounded=bounded, time_left=time_left)
+        result.requests += result.tags.pages
     return result

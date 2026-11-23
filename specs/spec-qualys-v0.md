@@ -85,6 +85,7 @@ Eight consequences shape v0:
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
 | req-qualys-tags | [Asset Tags](#asset-tags) | In Development | Every tag the credential can see, from the tag search, as a node keyed by tag id, linked to its subscription and its children; a complete list withdraws a tag it lacks |
 | req-qualys-sources | [Source Switches](#source-switches) | In Development | Detections, the knowledge base and tags each switched on or off per envelope, all on by default; a source switched off is recorded as not read, never as empty |
+| req-qualys-chunked-write | [Chunked Write](#chunked-write) | In Development | A run is written as bounded batches, each its own transaction, opening first and a seal last, so a big run cannot exhaust Postgres's lock table and a failure never moves the watermark |
 | req-qualys-event-time | [Event Time](#event-time) | In Development | Each model's event time declared for core's `req-grid-entity-event-time`: a detection's first found time, a QID's published time, none for the rest |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
 | req-qualys-scan-list | Scan List | Backlog | The scans Qualys ran, as nodes a detection's last scan can point at |
@@ -695,6 +696,38 @@ The client is `requests`, which reaches TLS through Python's `ssl` module and th
 | ACID | Title | Status | Description | Notes |
 | --- | --- | --- | --- | --- |
 | req-qualys-fips-1 | Declared And Checked | Proposed | The manifest declares `[fips] status = "compatible"`, and the crypto-providers report finds no bundled OpenSSL in the plugin's closure. | |
+
+### Chunked Write
+----
+RID: `req-qualys-chunked-write`
+
+Status: `In Development`
+
+How a run reaches the grid. Core takes one advisory lock for every natural key of every node and edge a batch writes, all held until the batch commits, and Postgres keeps those locks in one shared table of about `max_locks_per_transaction × max_connections` slots. A run written as one batch therefore fails once it names more keys than the table holds: near 1,300 detections at Postgres's defaults, at about five keys a detection. The field test met exactly that (unified-systems-com/qualys-tap#71, unified-systems-com/tap#1348). So a run is written as several batches, each its own transaction (George, 2026-11-23, Q36b). This is `WORKAROUND(unified-systems-com/tap#1348)` until core offers a chunked submit.
+
+#### Implementation
+
+`decompose.documents` turns one run's nodes and edges into GRIFT documents of one batch each, in this order:
+
+1. **Opening:** the run with `finished_at` null, naming its subscription by key. The subscription itself is written here only when the grid does not hold it yet (with no watermark, last complete read or standing scope), so an opening never writes back a held watermark that could undo a newer seal.
+2. **Shared records:** vulnerability records and packages, then the QIDs, because later batches name them by key.
+3. **Body:** every other node, in groups joined by batch-local refs. A ref means something only inside its batch, so a group is never split: a host, its detections, its neutral findings and their edges land together, and so do a tag and its children. Groups are packed into batches of at most `CHUNK_KEYS` (2,000) nodes plus edges, about one lock each. A single group bigger than that is written alone, over the bound. An edge that names the subscription by ref names it by key instead.
+4. **Seal:** the subscription with its new watermark and last complete read, every withdrawn host (and tag) with any edge naming it by ref, and the finished run.
+
+Each authority claim rides with the batch that holds its anchor, whose edges are the claim's asserted set. A claim whose anchor no batch holds is sent partial, so it proposes nothing.
+
+A batch the grid refuses stops the write: the collector's abort default raises, and the file load refuses with the batch's number. What committed stays, since each batch holds true observations. The seal, the only batch that moves the watermark, records a complete read or withdraws anything, is never written, so the run's record keeps `finished_at` null and the next run plans from the old watermark.
+
+`hold_subscription` is a session-level advisory lock, taken before the grid reads and released after the last batch, so a file load and a live run of one subscription still never interleave. An unlock that cannot be sent closes the connection, which releases the lock, because a persistent connection would otherwise hold it for its whole life. Its known gaps (a lock lost silently with a dropped connection, and no PgBouncer transaction mode) are unified-systems-com/qualys-tap#73, a lease row with a fencing token.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-qualys-chunked-write-1 | Every Record Once, No Ref Across Batches | Proposed | Across the body batches every node and edge of the run appears exactly once, every ref an edge names is a node of its own batch, and a run written in small parts lands the same hosts and detections as one batch. | `test_qualys_chunked_write.py::TestTheParts`, `TestTheCollectorWritesInParts`. |
+| req-qualys-chunked-write-2 | Bounded Batches | Proposed | No body batch holds more than `CHUNK_KEYS` nodes plus edges unless it is a single ref-joined group. | `TestTheParts.test_each_body_batch_stays_inside_the_bound_unless_one_group_is_bigger`. |
+| req-qualys-chunked-write-3 | Targets Before References, Seal Last | Proposed | The opening comes first, the seal last; every record an edge names by key lands in the same batch or an earlier one; each finding's claim rides with the finding. | `TestTheParts.test_opening_first_shared_records_next_seal_last`. |
+| req-qualys-chunked-write-4 | A Failed Part Never Seals | Proposed | When a batch fails, the run's `finished_at` stays null and the subscription's watermark, last complete read and standing scope stay as held. | `TestTheCollectorWritesInParts.test_a_part_that_fails_keeps_what_landed_and_never_seals`. |
 
 ### Event Time
 ----

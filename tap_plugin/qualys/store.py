@@ -9,7 +9,7 @@ from collections.abc import Iterable, Iterator
 from typing import Any
 
 from django.apps import apps
-from django.db import connection, transaction
+from django.db import DatabaseError, connection
 from django.forms.models import model_to_dict
 
 from tap_grid.dimension_names import view
@@ -129,12 +129,23 @@ def newest_read_time(key: str) -> Any:
 
 @contextlib.contextmanager
 def hold_subscription(key: str) -> Iterator[None]:
-    """One transaction holding a per-subscription advisory lock across a run's grid reads and its import.
+    """A per-subscription advisory lock held across a run's grid reads and every batch of its write.
 
     The file load and the live collector take the same lock, so two writes to one subscription never both read
-    the held state before either writes.
+    the held state before either writes. It is a session lock, not a transaction lock, because a run is written
+    as several batches, each its own transaction (req-qualys-chunked-write); one transaction around them all is
+    what exhausted Postgres's lock table (unified-systems-com/tap#1348). A session that ends releases it.
     """
-    with transaction.atomic():
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [f"qualys-load:{key}"])
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))", [f"qualys-load:{key}"])
+    try:
         yield
+    finally:
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", [f"qualys-load:{key}"])
+        except DatabaseError:
+            # The unlock could not be sent. A persistent connection would keep the lock for its whole life, so end
+            # the session, which releases it; inside a caller's transaction (a test) it ends with that session.
+            if not connection.in_atomic_block:
+                connection.close()

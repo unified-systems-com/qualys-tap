@@ -3,7 +3,8 @@
 For each envelope in scope ``qualys`` (req-qualys-connection): plan the read from what the grid holds, read it
 through the read-only transport (:mod:`tap_plugin.qualys.live`), then, holding the subscription, decompose and
 submit. The network read takes no database lock; the lock covers only the grid reads decompose makes and the
-import, and is the same one ``qualys_load`` takes, so a file load and a live run never interleave.
+import, and is the same one ``qualys_load`` takes, so a file load and a live run never interleave. The import is
+several batches, each its own transaction, with the seal last (req-qualys-chunked-write).
 
 Each envelope's ``sources`` switches the detections, the knowledge base and the tags on or off, all on by
 default (req-qualys-sources); a source switched off is recorded on the run as not read.
@@ -22,7 +23,7 @@ from tap_cares.collectors.readiness import CollectorReadinessStatus, CollectorSe
 from tap_plugin.qualys import live
 from tap_plugin.qualys.client import ReadOnlyClient, Response
 from tap_plugin.qualys.credential import Credential, discover
-from tap_plugin.qualys.decompose import Run, decompose, document
+from tap_plugin.qualys.decompose import Run, decompose, documents
 from tap_plugin.qualys.read_kind import NARROWER
 from tap_plugin.qualys.store import GridStore, hold_subscription, newest_read_time
 
@@ -154,7 +155,11 @@ class QualysCollector(CollectorBase):
                 self.record_warn(_SITE_NEWER_READ, "NEWER_READ_HELD", f"{credential.qualified}: a newer read landed during this run; nothing was written for it.", message_data={"credential": credential.qualified})
                 return None
             result = decompose(run, got.pages, got.kb_pages, GridStore())
-            self.submit_grift(document(result, run))
+            run_node = next(n for n in result.nodes if n["entity"]["ref"] == "run")
+            run_node["node"]["finished_at"] = datetime.now(UTC).isoformat()
+            # A rejected batch raises (the abort default), so a later batch, and the seal above all, is never sent.
+            for doc in documents(result, run):
+                self.submit_grift(doc)
         line = (f"{credential.qualified}: {result.read_kind} read, {len(got.pages)} page(s), {result.counters.get('hosts', 0)} host(s), "
                 f"{result.counters.get('detections', 0)} detection(s), {result.counters.get('neutral_findings', 0)} neutral finding(s), "
                 f"{result.counters.get('tags', 0)} tag(s); "

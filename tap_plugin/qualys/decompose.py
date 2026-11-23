@@ -157,7 +157,9 @@ class Result:
     scopes_not_read: list[dict[str, str]] = field(default_factory=list)
     partly_read_pages: int = 0
     read_kind: str = ""  # the kind the run was treated as, after any downgrade
-    #: The subscription's fields as the grid held them before this run, for the opening batch of a chunked write.
+    #: Whether the grid held the subscription before this run; the opening batch writes it only when it did not.
+    subscription_existed: bool = False
+    #: The subscription's fields as the grid held them before this run, for the opening batch of a new subscription.
     subscription_held: dict[str, Any] = field(default_factory=dict)
 
     def count(self, name: str, n: int = 1) -> None:
@@ -480,6 +482,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     result.read_kind = read_kind
     # What the opening batch writes: the subscription as it was, so a run whose seal never lands moves nothing
     # a later plan reads (the watermark, the last complete read, the standing scope).
+    result.subscription_existed = stored is not None
     result.subscription_held = {
         **sub_fields,
         "standing_scope": held.get("standing_scope") if stored is not None else None,
@@ -655,7 +658,8 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
     WORKAROUND(unified-systems-com/tap#1348): core locks every natural key of a batch until it commits, so a
     big run written as one batch exhausts Postgres's lock table. In order:
 
-    1. the opening: the subscription as the grid held it and the run, not yet finished;
+    1. the opening: the run, not yet finished, and the subscription only when the grid does not hold it yet, so an
+       opening never rewrites a subscription's watermark, last complete read or standing scope;
     2. the shared records later batches point at by key (QIDs, vulnerability records, packages);
     3. everything else in bounded chunks, each a whole group of nodes joined by batch-local refs, so a host,
        its detections, its findings and their authority claims land together, and so do a tag and its children;
@@ -671,6 +675,7 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
     sub_key = {"api_host": sub["node"]["api_host"], "subscription_label": sub["node"]["subscription_label"]}
     withdrawn = [n for n in result.nodes if n["entity"]["ref"] not in _HUBS and n["node"].get("withdrawn_in_run") == run.run_id]
     withdrawn_refs = {n["entity"]["ref"] for n in withdrawn}
+    seal_refs = set(_HUBS) | withdrawn_refs
     body = [n for n in result.nodes if n["entity"]["ref"] not in _HUBS and n["entity"]["ref"] not in withdrawn_refs]
 
     # Group nodes joined by batch-local refs; a ref is meaningful only inside the batch that holds it.
@@ -683,9 +688,16 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
         return ref
 
     hub_edges: list[dict[str, Any]] = []
+    seal_edges: list[dict[str, Any]] = []
     grouped_edges: list[tuple[str, dict[str, Any]]] = []
     for e in result.edges:
         ends = [r for r in (e["edge"].get("from_ref"), e["edge"].get("to_ref")) if r is not None]
+        if any(r in withdrawn_refs for r in ends):
+            # A withdrawn node is written by the seal alone, so an edge naming it by ref rides there too.
+            if any(r not in seal_refs for r in ends):
+                raise ValueError(f"edge {e['entity']['ref']} joins a withdrawn node to a body node by ref")
+            seal_edges.append(e)
+            continue
         inner = [r for r in ends if r not in _HUBS]
         if not inner:
             hub_edges.append(e)
@@ -744,15 +756,25 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
         else:
             claims[at].append(claim)
 
-    held_sub = {**sub, "node": result.subscription_held}
     opening_run = {**the_run, "node": {**the_run["node"], "finished_at": None}}
+    if result.subscription_existed:
+        # The subscription is not rewritten by the opening: a held value written back here could undo a newer
+        # seal if two writers ever overlapped. The run names it by key instead.
+        opening_nodes = [opening_run]
+        opening_edges = [
+            {**e, "edge": {k: v for k, v in e["edge"].items() if k != "to_ref"} | {"to_key": {"entity_type": QualysSubscription.ENTITY_TYPE, "key": sub_key}}}
+            for e in hub_edges
+        ]
+    else:
+        opening_nodes = [{**sub, "node": result.subscription_held}, opening_run]
+        opening_edges = hub_edges
     total = len(chunks) + 2
     data = {"run_id": run.run_id, "counters": result.counters}
     out = [_document(run, f"Qualys {run.source} read, part 1 of {total} (opening)", f"The opening of a {result.read_kind or run.read_kind} read of Qualys subscription {run.label}: the subscription as held, and the run, not yet finished.",
-                     {**data, "part": 1, "parts": total}, [held_sub, opening_run], hub_edges, [])]
+                     {**data, "part": 1, "parts": total}, opening_nodes, opening_edges, [])]
     for number, chunk in enumerate(chunks):
         out.append(_document(run, f"Qualys {run.source} read, part {number + 2} of {total}", f"Part {number + 2} of a read of Qualys subscription {run.label}.",
                              {**data, "part": number + 2, "parts": total}, chunk["nodes"], chunk["edges"], claims[number]))
     out.append(_document(run, f"Qualys {run.source} read, part {total} of {total} (seal)", f"The seal of a {result.read_kind or run.read_kind} read of Qualys subscription {run.label}: the watermark, the withdrawals and the finished run.",
-                         {**data, "part": total, "parts": total}, [sub, *withdrawn, the_run], hub_edges, seal_claims))
+                         {**data, "part": total, "parts": total}, [sub, *withdrawn, the_run], hub_edges + seal_edges, seal_claims))
     return out

@@ -139,5 +139,7 @@ def hold_subscription(key: str) -> Iterator[None]:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", [f"qualys-load:{key}"])
         except DatabaseError:
-            # Inside a transaction that already failed, nothing more can be sent; the lock ends with the session.
-            pass
+            # The unlock could not be sent. A persistent connection would keep the lock for its whole life, so end
+            # the session, which releases it; inside a caller's transaction (a test) it ends with that session.
+            if not connection.in_atomic_block:
+                connection.close()

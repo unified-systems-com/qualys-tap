@@ -705,16 +705,16 @@ How a run reaches the grid. Core takes one advisory lock for every natural key o
 
 `decompose.documents` turns one run's nodes and edges into GRIFT documents of one batch each, in this order:
 
-1. **Opening:** the subscription as the grid held it (its watermark, last complete read and standing scope unchanged; for a new subscription, no standing scope), and the run with `finished_at` null.
+1. **Opening:** the run with `finished_at` null, naming its subscription by key. The subscription itself is written here only when the grid does not hold it yet (with no watermark, last complete read or standing scope), so an opening never writes back a held watermark that could undo a newer seal.
 2. **Shared records:** vulnerability records and packages, then the QIDs, because later batches name them by key.
 3. **Body:** every other node, in groups joined by batch-local refs. A ref means something only inside its batch, so a group is never split: a host, its detections, its neutral findings and their edges land together, and so do a tag and its children. Groups are packed into batches of at most `CHUNK_KEYS` (2,000) nodes plus edges, about one lock each. A single group bigger than that is written alone, over the bound. An edge that names the subscription by ref names it by key instead.
-4. **Seal:** the subscription with its new watermark and last complete read, every withdrawn host (and tag), and the finished run.
+4. **Seal:** the subscription with its new watermark and last complete read, every withdrawn host (and tag) with any edge naming it by ref, and the finished run.
 
 Each authority claim rides with the batch that holds its anchor, whose edges are the claim's asserted set. A claim whose anchor no batch holds is sent partial, so it proposes nothing.
 
 A batch the grid refuses stops the write: the collector's abort default raises, and the file load refuses with the batch's number. What committed stays, since each batch holds true observations. The seal, the only batch that moves the watermark, records a complete read or withdraws anything, is never written, so the run's record keeps `finished_at` null and the next run plans from the old watermark.
 
-`hold_subscription` is a session-level advisory lock, taken before the grid reads and released after the last batch, so a file load and a live run of one subscription still never interleave. A session that ends releases it.
+`hold_subscription` is a session-level advisory lock, taken before the grid reads and released after the last batch, so a file load and a live run of one subscription still never interleave. An unlock that cannot be sent closes the connection, which releases the lock, because a persistent connection would otherwise hold it for its whole life. Its known gaps (a lock lost silently with a dropped connection, and no PgBouncer transaction mode) are unified-systems-com/qualys-tap#73, a lease row with a fencing token.
 
 #### Acceptance Criteria
 

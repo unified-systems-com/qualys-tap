@@ -65,8 +65,10 @@ class TestTheParts:
         assert len(docs) > 4
         for batch in map(_batch, docs[1:-1]):
             size = len(batch["nodes"]) + len(batch["edges"])
-            # A host and everything joined to it by ref is never split, so a batch over the bound is one group.
-            assert size <= 6 or len({n["entity"]["entity_type"] for n in batch["nodes"] if n["entity"]["entity_type"] == QualysHost.ENTITY_TYPE}) <= 1
+            # A host and everything joined to it by ref is never split, so a batch over the bound holds one host.
+            hosts = sum(1 for n in batch["nodes"] if n["entity"]["entity_type"] == QualysHost.ENTITY_TYPE)
+            assert size <= 6 or hosts == 1, (size, hosts)
+        assert any(len(_batch(d)["nodes"]) + len(_batch(d)["edges"]) > 6 for d in docs[1:-1])  # the exception is exercised
 
     @pytest.mark.spec("req-qualys-chunked-write-3")
     def test_opening_first_shared_records_next_seal_last(self, parts) -> None:
@@ -101,6 +103,26 @@ class TestTheParts:
             for claim in batch.get("edge_cases", {}).get("authority", []):
                 assert any(n["entity"]["entity_type"] == FINDING_TYPE and all(n["node"].get(k) == v for k, v in claim["anchor"]["key"].items())
                            for n in batch["nodes"])
+
+    @pytest.mark.spec("req-qualys-chunked-write-3")
+    def test_a_later_run_never_rewrites_the_subscription_before_its_seal_and_withdraws_in_the_seal(self, parts) -> None:
+        _, _, docs = parts
+        for doc in docs:
+            assert not grift_import(doc).errors
+        run = Run(api_host=HOST, label="acme", source="file", read_kind=COMPLETE, started_at=AT, read_at=AT, applied_filter={},
+                  knowledgebase_asked=set())
+        later = decompose(run, [parse_detection_page((FIXTURES / "hld-documented.xml").read_bytes())], [], GridStore())
+        assert later.counters.get("hosts_withdrawn")
+        again = documents(later, run, max_keys=6)
+        opening, seal = _batch(again[0]), _batch(again[-1])
+        assert [n["entity"]["entity_type"] for n in opening["nodes"]] == [QualysScanRun.ENTITY_TYPE]
+        (to_sub,) = opening["edges"]
+        assert to_sub["edge"]["to_key"]["entity_type"] == QualysSubscription.ENTITY_TYPE and "to_ref" not in to_sub["edge"]
+        withdrawn = [n for n in seal["nodes"] if n["node"].get("withdrawn_in_run") == run.run_id]
+        assert withdrawn and all(n["node"]["state"] == "withdrawn" for n in withdrawn)
+        assert not any(n["node"].get("withdrawn_in_run") == run.run_id for d in again[:-1] for n in _batch(d)["nodes"])
+        for doc in again:
+            assert not grift_import(doc).errors
 
     def test_each_batch_imports_and_the_grid_matches_one_batch(self, parts) -> None:
         _, _, docs = parts

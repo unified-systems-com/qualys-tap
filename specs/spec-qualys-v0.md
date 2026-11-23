@@ -698,7 +698,7 @@ RID: `req-qualys-event-time`
 
 Status: `In Development`
 
-How this plugin's types meet core's event time (`req-grid-entity-event-time` in `tap_grid/specs/spec-grid-entity.md`, tap 0.4.6). Core derives `event_start`, `event_end`, `event_precision` and the `time` dimension from a field a model names; this plugin only names the field. The floor is `requires_tap >= 0.4.6` because of it.
+How this plugin's types meet core's event time (`req-grid-entity-event-time` in `tap_grid/specs/spec-grid-entity.md`, tap 0.4.6). Core derives `event_start`, `event_end`, `event_precision` and the time dimension (`tap.time` from tap 0.4.7) from a field a model names; this plugin only names the field. Event time needs `requires_tap >= 0.4.6`; the floor is `>= 0.4.8`, the release the field test runs, so CI tests at exactly that core.
 
 #### Implementation
 

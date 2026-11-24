@@ -27,6 +27,8 @@ KIND = "qualys_api_credential"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "qualys_api_credential.schema.json"
 #: The kinds of Qualys data a run can read, each on unless the envelope switches it off (req-qualys-sources).
 SOURCES = ("detections", "knowledgebase", "tags")
+#: What a run may write beyond Qualys's own types, each off unless the envelope turns it on (req-qualys-aws).
+INTEGRATIONS = ("aws",)
 
 
 class CredentialError(Exception):
@@ -49,6 +51,7 @@ class Credential:
     ca_bundle: str | None
     _scope: tuple[tuple[str, tuple[int, ...]], ...]
     _sources: tuple[tuple[str, bool], ...]
+    _integrations: tuple[tuple[str, bool], ...]
     _username: str = field(repr=False)
     _password: str = field(repr=False)
 
@@ -64,6 +67,11 @@ class Credential:
     def sources(self) -> dict[str, bool]:
         """Each source in ``SOURCES``, on or off, as a fresh copy each time."""
         return dict(self._sources)
+
+    @property
+    def integrations(self) -> dict[str, bool]:
+        """Each integration in ``INTEGRATIONS``, on or off (all off unless set), as a fresh copy each time."""
+        return dict(self._integrations)
 
     @property
     def basic(self) -> tuple[str, str]:
@@ -118,6 +126,7 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
         ca_bundle=data.get("ca_bundle"),
         _scope=tuple((k, tuple(sorted(v))) for k, v in sorted(scope.items())),
         _sources=sources,
+        _integrations=tuple((name, bool((data.get("integrations") or {}).get(name, False))) for name in INTEGRATIONS),
         _username=data["username"],
         _password=data["password"],
     )

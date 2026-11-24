@@ -101,6 +101,21 @@ class GridStore:
         from tap_grid.registry import get_model_class
 
         return dict(get_model_class(entity_type).DEFAULT_DIMENSIONS)
+    def held_keys(self, entity_type: str, keys: Iterable[tuple[str, ...]]) -> set[tuple[str, ...]] | None:
+        """Of these natural keys of an aws_core type, those the grid holds (req-qualys-aws); None without aws_core."""
+        from tap_grid.registry import get_model_class
+
+        try:
+            model = get_model_class(entity_type)
+        except (KeyError, LookupError):
+            return None
+        keys = set(keys)
+        if not keys:
+            return set()
+        names = model.NATURAL_KEY
+        rows = model.objects.filter(**{f"{names[0]}__in": {k[0] for k in keys}}).values_list(*names)
+        return {tuple(row) for row in rows} & keys
+
     def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
         """Of these ids, those aws_core holds by exact ``instance_id``; None when aws_core is not installed.
 

@@ -144,6 +144,7 @@ class QualysCollector(CollectorBase):
             tags_complete=got.tags.complete if got.tags is not None else False,
             tags_not_read=got.tags.not_read if got.tags is not None else [],
             switched_off=got.switched_off,
+            aws=credential.integrations["aws"],
         )
         if got.tags is not None:
             run.extra_warnings = run.extra_warnings + got.tags.warnings

@@ -64,6 +64,7 @@ class QualysHost(BaseModel):
         "cloud_resource_id": _STR_OR_NULL,
         "ec2_instance_id": _STR_OR_NULL,
         "ec2_metadata": {"type": ["object", "null"], "additionalProperties": {"type": ["string", "null"]}},
+        "ec2_metadata_status": {"type": ["object", "null"], "additionalProperties": {"type": "object"}},
         "cloud_tags": {"type": ["array", "null"], "items": {"type": "object"}},
         "state": {"type": ["string", "null"], "enum": ["current", "withdrawn", None]},
         "withdrawn_in_run": _STR_OR_NULL,
@@ -115,6 +116,12 @@ class QualysHost(BaseModel):
         blank=True,
         default=None,
         help_text="The METADATA/EC2 attributes as name to value, from host_metadata=ec2; null when not returned.",
+    )
+    ec2_metadata_status = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="Per METADATA/EC2 attribute, by name: LAST_STATUS, LAST_SUCCESS_DATE, LAST_ERROR_DATE and LAST_ERROR as returned; null when not returned.",
     )
     cloud_tags = models.JSONField(
         null=True, blank=True, default=None, help_text="The CLOUD_TAGS as returned, from show_cloud_tags=1; [] when none."

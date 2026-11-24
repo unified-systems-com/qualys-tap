@@ -33,6 +33,10 @@ MAX_DEPTH = 64
 MAX_ELEMENTS = 8_000_000
 
 _EXTRACT = Path(__file__).resolve().parent / "contract" / "extract.json"
+#: Consumed elements this plugin does not read under a given parent. The check matches children by name, so an
+#: element read in one place (``LAST_SUCCESS_DATE`` under ``ATTRIBUTE``) would otherwise be required everywhere the
+#: DTD requires it, and one AWS tag lacking it would refuse a whole detection page (PR #78 review).
+_NOT_READ_UNDER: dict[str, frozenset[str]] = {"CLOUD_TAG": frozenset({"LAST_SUCCESS_DATE"})}
 
 
 class PageRefused(ValueError):
@@ -120,7 +124,8 @@ def _check(node: Element, elements: dict[str, Any], depth: int) -> None:
     decl = elements.get(node.tag)
     if decl:
         present = {child.tag for child in node}
-        missing = [c for c in decl["required_children"] if c in elements and c not in present]
+        skipped = _NOT_READ_UNDER.get(node.tag, frozenset())
+        missing = [c for c in decl["required_children"] if c in elements and c not in present and c not in skipped]
         if missing:
             raise PageRefused(f"{node.tag} lacks required {', '.join(missing)}")
         tags = [child.tag for child in node]
@@ -145,15 +150,39 @@ def _text(parent: Element | None, tag: str, *, exact: bool = False) -> str | Non
     return text if exact else text.strip()
 
 
+def _cloud_tags(node: Element) -> list[dict[str, str | None]] | None:
+    """The provider's own resource tags, each ``CLOUD_TAG``'s ``NAME`` and ``VALUE`` as returned.
+
+    None when the element is absent (not returned, or ``show_cloud_tags`` not honoured), never ``[]``: the DTD
+    requires at least one tag inside it, so an empty list would claim an observation nobody made.
+    ``LAST_SUCCESS_DATE`` is not read: the DTD requires it, and a contract that consumed it would refuse a whole
+    detection page over one tag that lacked it.
+    """
+    tags = node.find("CLOUD_PROVIDER_TAGS")
+    if tags is None:
+        return None
+    return [
+        {"name": _text(tag, "NAME", exact=True), "value": _text(tag, "VALUE", exact=True)}
+        for tag in tags.findall("CLOUD_TAG")
+    ]
+
+
 def _host(node: Element) -> dict[str, Any]:
     metadata = node.find("METADATA/EC2")
-    ec2 = None
+    ec2 = status = None
     if metadata is not None:
-        ec2 = {}
+        ec2, status = {}, {}
         for attribute in metadata.findall("ATTRIBUTE"):
             name = _text(attribute, "NAME")
             if name:
                 ec2[name] = _text(attribute, "VALUE")
+                # How Qualys last fared reading the attribute: an empty VALUE with LAST_STATUS Success is observed-empty.
+                status[name] = {
+                    "last_status": _text(attribute, "LAST_STATUS"),
+                    "last_success_date": _text(attribute, "LAST_SUCCESS_DATE"),
+                    "last_error_date": _text(attribute, "LAST_ERROR_DATE"),
+                    "last_error": _text(attribute, "LAST_ERROR"),
+                }
     return {
         "host_id": _text(node, "ID"),
         "asset_id": _text(node, "ASSET_ID"),
@@ -171,6 +200,8 @@ def _host(node: Element) -> dict[str, Any]:
         "cloud_resource_id": _text(node, "CLOUD_RESOURCE_ID"),
         "ec2_instance_id": _text(node, "EC2_INSTANCE_ID"),
         "ec2_metadata": ec2,
+        "ec2_metadata_status": status,
+        "cloud_tags": _cloud_tags(node),
         "detections": [_detection(d) for d in node.findall("DETECTION_LIST/DETECTION")],
     }
 

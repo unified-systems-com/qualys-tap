@@ -36,7 +36,7 @@ from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
 from tap_plugin.qualys.models.tag import QualysTag
-from tap_plugin.qualys import neutral, parsers
+from tap_plugin.qualys import aws_mint, neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
 from tap_plugin.qualys.read_kind import COMPLETE, NARROWER, WINDOW
 
@@ -120,6 +120,10 @@ class GridView(Protocol):
 
     def default_dimensions(self, entity_type: str) -> dict[str, str]: ...
 
+    def held_keys(self, entity_type: str, keys: Iterable[tuple[str, ...]]) -> set[tuple[str, ...]] | None:
+        """Of these natural keys of an aws_core type, those the grid holds; None when aws_core is not installed."""
+        ...
+
     def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
         """Of these ids, those ``aws_core`` holds as an EC2 instance's ``instance_id``; None without ``aws_core``."""
         ...
@@ -156,6 +160,8 @@ class Run:
     #: Whether that list is the whole list: every page read to Qualys's last, and every tag keyable.
     tags_complete: bool = False
     tags_not_read: list[dict[str, str]] = field(default_factory=list)
+    #: Whether the envelope turned the AWS integration on (req-qualys-aws): mint absent aws_core nodes.
+    aws: bool = False
     #: The sources the envelope switched off (req-qualys-sources), each listed on the run as not read.
     switched_off: list[str] = field(default_factory=list)
 
@@ -306,7 +312,8 @@ def _host_node(ref: str, key: str, record: dict[str, Any], result: Result) -> di
     for raw, parsed in _PARSED_TIMES.items():
         fields[parsed] = parse_time(fields[raw])
     fields["ec2_metadata"] = record.get("ec2_metadata")
-    fields["cloud_tags"] = None  # CLOUD_PROVIDER_TAGS has no documented shape yet (ledger cloud-provider-tags-shape)
+    fields["ec2_metadata_status"] = record.get("ec2_metadata_status")
+    fields["cloud_tags"] = record.get("cloud_tags")  # CLOUD_TAG NAME and VALUE as returned; None when not returned
     fields["state"] = "current"
     fields["withdrawn_in_run"] = None
     return envelope(ref, QualysHost, fields.get("dns") or fields.get("ip") or f"host {record['host_id']}", fields)
@@ -486,11 +493,13 @@ def _want_ec2(host_ref: str, host: dict[str, Any], wanted: dict[str, str], resul
         result.count("ec2_unresolved_deprecated_field")
 
 
-def _link_ec2(wanted: dict[str, str], grid: GridView, result: Result) -> list[dict[str, str]]:
-    """``TRACKS_EC2_INSTANCE__qualys`` to each instance ``aws_core`` holds; the instance is never written (-2, -3, -4)."""
+def _link_ec2(wanted: dict[str, str], grid: GridView, result: Result, minted: set[str] | None = None) -> list[dict[str, str]]:
+    """``TRACKS_EC2_INSTANCE__qualys`` to each instance ``aws_core`` holds or this run mints (-2, -3, -4; req-qualys-aws)."""
     if not wanted:
         return []
     held = grid.ec2_instances(set(wanted.values()))
+    if held is not None and minted:
+        held = held | minted
     if held is None:
         return [{"code": "AWS_CORE_ABSENT", "detail": f"aws_core is not installed; {len(wanted)} EC2 host(s) not looked up"}]
     for host_ref, instance_id in sorted(wanted.items()):
@@ -607,7 +616,17 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             result.scopes_not_read.append({"scope": f"detection page {number + 1}", "reason": "partly read: an entry had no usable key"})
     result.count("hosts", len(seen_hosts))
     result.count("detections", len(seen_detections))
-    warnings.extend(_link_ec2(ec2_wanted, grid, result))
+    minted: set[str] | None = None
+    if run.aws:
+        aws = aws_mint.mint((h for page in pages for h in page.hosts), grid)
+        if not aws.absent:
+            # Shared records: written before the hosts whose EC2 link names an instance by key.
+            result.nodes.extend(aws.nodes)
+            result.edges.extend(aws.edges)
+            for name, n in aws.counters.items():
+                result.count(name, n)
+            minted = aws.instances
+    warnings.extend(_link_ec2(ec2_wanted, grid, result, minted))
 
     # Knowledge-base records. A QID not returned is written as a stub only where the grid holds none, so a
     # record an earlier read filled is never wiped by a read that did not return it.
@@ -727,7 +746,7 @@ def _document(run: Run, name: str, description: str, data: dict[str, Any], nodes
 #: A single host whose own records exceed it is written alone, over the bound (req-qualys-chunked-write-2).
 CHUNK_KEYS = 2000
 _HUBS = ("sub", "run")
-_SHARED_TYPES = frozenset({QualysQid.ENTITY_TYPE, neutral.VULNERABILITY_TYPE, neutral.PACKAGE_TYPE})
+_SHARED_TYPES = frozenset({QualysQid.ENTITY_TYPE, neutral.VULNERABILITY_TYPE, neutral.PACKAGE_TYPE}) | aws_mint.TYPES
 
 
 def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[dict[str, Any]]:

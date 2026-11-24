@@ -408,7 +408,8 @@ def _asset(node: Element) -> dict[str, Any]:
             record[name] = None  # not returned: unobserved, never "none"
             continue
         listed = found.find("list")
-        record[name] = [] if listed is None else [{out: _text(entry, src, exact=True) for src, out in fields.items()} for entry in listed if entry.tag == item]
+        # A wrapper with no <list> inside is malformed, not empty: null, so a held inventory is kept (PR #84 review).
+        record[name] = None if listed is None else [{out: _text(entry, src, exact=True) for src, out in fields.items()} for entry in listed if entry.tag == item]
     return record
 
 

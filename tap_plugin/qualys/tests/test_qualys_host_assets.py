@@ -105,6 +105,12 @@ class TestThePage:
         assert first["software"] == [{"name": "openssl", "version": "1.0.2k-19.el7"}]
         assert second["open_ports"] == [] and second["interfaces"] is None and second["software"] is None
 
+    def test_a_wrapper_without_its_list_is_not_returned_never_empty(self) -> None:
+        body = (b"<ServiceResponse><responseCode>SUCCESS</responseCode><count>1</count><hasMoreRecords>false</hasMoreRecords><data>"
+                b"<HostAsset><id>1</id><qwebHostId>1001</qwebHostId><networkInterface/><openPort><list/></openPort></HostAsset></data></ServiceResponse>")
+        (asset,) = parse_host_asset_page(body).assets
+        assert asset["interfaces"] is None and asset["open_ports"] == [] and asset["software"] is None
+
     def test_anything_but_success_is_refused(self) -> None:
         with pytest.raises(PageRefused, match="NOT_AUTHORIZED"):
             parse_host_asset_page(b"<ServiceResponse><responseCode>NOT_AUTHORIZED</responseCode></ServiceResponse>")

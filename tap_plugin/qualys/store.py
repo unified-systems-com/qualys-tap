@@ -11,15 +11,14 @@ from typing import Any
 from django.apps import apps
 from django.db import DatabaseError, connection
 from django.forms.models import model_to_dict
-
-from tap_grid.dimension_names import view
 from tap_plugin.qualys.models.detection import QualysDetection
-
 from tap_plugin.qualys.models.host import QualysHost
 from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
 from tap_plugin.qualys.models.tag import QualysTag
+
+from tap_grid.dimension_names import view
 
 _HOST_PAYLOAD = [f.name for f in QualysHost._meta.concrete_fields if f.name in QualysHost.FIELD_CRUD_SCHEMA]
 _TAG_PAYLOAD = [f.name for f in QualysTag._meta.concrete_fields if f.name in QualysTag.FIELD_CRUD_SCHEMA]
@@ -112,9 +111,22 @@ class GridStore:
         keys = set(keys)
         if not keys:
             return set()
+        from tap_grid.natural_key import constituting_properties, is_dimension
+
         names = model.NATURAL_KEY
-        rows = model.objects.filter(**{f"{names[0]}__in": {k[0] for k in keys}}).values_list(*names)
-        return {tuple(row) for row in rows} & keys
+        columns = [i for i, name in enumerate(names) if not is_dimension(name)]
+        if len(columns) == len(names):
+            rows = model.objects.filter(**{f"{names[0]}__in": {k[0] for k in keys}}).values_list(*names)
+            return {tuple(row) for row in rows} & keys
+        # A key naming a dimension (form 3, unified-systems-com/tap#1355): the value lives on the spine's
+        # dimensions, never in a column, so narrow by a column and read each row's key the way core does.
+        first = columns[0]
+        held = set()
+        for row in model.objects.filter(**{f"{names[first]}__in": {k[first] for k in keys}}).select_related("entity"):
+            payload = {names[i]: getattr(row, names[i]) for i in columns}
+            values = constituting_properties(names, payload, row.entity.dimensions)
+            held.add(tuple(values[name] for name in names))
+        return held & keys
 
     def has_edge_type(self, slug: str) -> bool:
         from tap_grid.constraints import get_edge_type_constraints

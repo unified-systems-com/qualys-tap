@@ -13,6 +13,7 @@ import tap_plugin.aws_core.models  # noqa: F401 — trigger model registration
 import tap_plugin.compliance_core.models  # noqa: F401 — trigger model registration
 import tap_plugin.computing_core.models  # noqa: F401 — trigger model registration
 import tap_plugin.qualys.models  # noqa: F401 — trigger model registration
+from tap_plugin.computing_core import key_dimensions
 from tap_plugin.qualys import shared_host
 from tap_plugin.qualys.collectors import qualys_collector
 from tap_plugin.qualys.models import QualysHost, QualysScanRun
@@ -55,6 +56,14 @@ def _host_model() -> Any:
     return get_model_class(shared_host.HOST_TYPE)
 
 
+def _shared_host() -> Any:
+    return _host_model().find_existing(**{key_dimensions.HOST_TYPE_ENTRY: key_dimensions.AWS_EC2, "stable_id": INSTANCE})
+
+
+def _hold_host(**fields: Any) -> None:
+    assert create_node(shared_host.HOST_TYPE, {"stable_id": INSTANCE, **fields}, dimensions={key_dimensions.HOST_TYPE: key_dimensions.AWS_EC2}).success
+
+
 def _installs() -> set[tuple[str, str]]:
     names = {e.id: e.name for e in Entity.objects.all()}
     return {(names[e.from_entity_id], names[e.to_entity_id]) for e in Edge.objects.filter(edge_type=shared_host.INSTALLS_PACKAGE)}
@@ -62,7 +71,7 @@ def _installs() -> set[tuple[str, str]]:
 
 class TestHostKey:
     @pytest.mark.spec("req-qualys-installed-software-1")
-    def test_an_ec2_host_is_its_instance_under_the_aws_ec2_realm(self) -> None:
+    def test_an_ec2_host_is_its_instance_under_the_aws_ec2_host_type(self) -> None:
         host = {"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": INSTANCE}
         assert shared_host.host_key(host) == ("aws-ec2", INSTANCE)
         assert shared_host.host_key({**host, "cloud_resource_id": "i-not/hex"}) is None
@@ -80,8 +89,9 @@ class TestOnTheGrid:
     @pytest.mark.spec("req-qualys-installed-software-1")
     def test_the_instance_is_a_shared_host_that_installs_its_packages(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
         _collector(monkeypatch, _router()).run()
-        host = _host_model().objects.get(realm="aws-ec2", stable_id=INSTANCE)
-        assert host.kind is None  # key fields only: the shared-fact rule
+        host = _shared_host()
+        assert host is not None and host.kind is None  # key fields only: the shared-fact rule
+        assert host.entity.natural_key == f"aws-ec2|{INSTANCE}"  # the host type is the key's dimension, not a column
         assert _installs() == {(INSTANCE, "openssl 3.0.2-0ubuntu1.15"), (INSTANCE, "bash 5.1-6ubuntu1")}
         package = get_model_class("computing_core__package").objects.get(name="openssl")
         assert (package.ecosystem, package.version) == ("deb", "3.0.2-0ubuntu1.15")
@@ -92,9 +102,9 @@ class TestOnTheGrid:
 
     @pytest.mark.spec("req-qualys-installed-software-2")
     def test_a_host_another_plugin_holds_is_linked_and_never_rewritten(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
-        assert create_node(shared_host.HOST_TYPE, {"realm": "aws-ec2", "stable_id": INSTANCE, "name": "web-1", "kind": "virtual_machine"}).success
+        _hold_host(name="web-1", kind="virtual_machine")
         _collector(monkeypatch, _router()).run()
-        host = _host_model().objects.get(realm="aws-ec2", stable_id=INSTANCE)
+        host = _shared_host()
         assert (host.name, host.kind) == ("web-1", "virtual_machine")
         assert _installs() == {("web-1", "openssl 3.0.2-0ubuntu1.15"), ("web-1", "bash 5.1-6ubuntu1")}
         assert "shared_hosts_created" not in QualysScanRun.objects.get(subscription_key=KEY).counters
@@ -141,7 +151,7 @@ class TestAHeldHostAtAnyBound:
     def test_every_install_is_written_once_and_the_claim_proposes_nothing(self, secrets) -> None:
         from tap_plugin.qualys.decompose import documents
 
-        assert create_node(shared_host.HOST_TYPE, {"realm": "aws-ec2", "stable_id": INSTANCE, "name": "web-1"}).success
+        _hold_host(name="web-1")
         captured: dict[str, Any] = {}
 
         def capture(result: Any, run: Any) -> None:

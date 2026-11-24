@@ -8,19 +8,20 @@ each package Qualys reports installed, the package created with its key fields w
 The package's ecosystem comes from the host's OS, by the same rule the package-table parser uses (Debian and
 Ubuntu ``deb``, RPM distributions ``rpm``). An OS it cannot place writes no package, never a guessed one.
 
-The host's identity is decided in :func:`host_key` alone. It is computing_core's ``(realm, stable_id)`` today;
-when form-3 keys land (unified-systems-com/tap#1355) and the realm becomes a dimension, that one function changes.
+The host's identity is decided in :func:`host_key` alone: computing_core's ``(tap.computing.host_type, stable_id)``,
+the host type an identity dimension on the envelope, never a payload field (form 3, unified-systems-com/tap#1355).
 """
 
 import re
 from collections.abc import Iterable
 from typing import Any, Protocol
 
+from tap_plugin.computing_core import key_dimensions
 from tap_plugin.qualys import neutral
 from tap_plugin.qualys.parsers.package_table import _unambiguous, ecosystem_of
 
 HOST_TYPE = "computing_core__host"
-EC2_REALM = "aws-ec2"
+EC2_HOST_TYPE = key_dimensions.AWS_EC2
 TRACKS_HOST = "TRACKS_HOST__qualys"
 INSTALLS_PACKAGE = "INSTALLS_PACKAGE__computing_core"
 _INSTANCE = re.compile(r"i-[0-9a-f]{8}(?:[0-9a-f]{9})?")
@@ -35,14 +36,14 @@ class HostView(Protocol):
 
 
 def host_key(host: dict[str, Any]) -> tuple[str, str] | None:
-    """The computing_core host a Qualys host is, as (realm, stable_id); None when Qualys names no issuer's id for it.
+    """The computing_core host a Qualys host is, as (host type, stable_id); None when Qualys names no issuer's id for it.
 
-    An EC2 instance is ``("aws-ec2", instance id)``, computing_core's realm for it. A host Qualys reports with no
-    cloud instance id has no realm Qualys can vouch for, so no shared host is written for it.
+    An EC2 instance is ``("aws-ec2", instance id)``, computing_core's host type for it. A host Qualys reports with no
+    cloud instance id has no host type Qualys can vouch for, so no shared host is written for it.
     """
     instance = host.get("cloud_resource_id")
     if host.get("cloud_provider") == "AWS" and host.get("cloud_service") == "EC2" and isinstance(instance, str) and _INSTANCE.fullmatch(instance):
-        return (EC2_REALM, instance)
+        return (EC2_HOST_TYPE, instance)
     return None
 
 
@@ -53,7 +54,12 @@ def _host_ref(key: tuple[str, str]) -> str:
 def _host_end(key: tuple[str, str], minted: bool, side: str) -> dict[str, Any]:
     if minted:
         return {f"{side}_ref": _host_ref(key)}
-    return {f"{side}_key": {"entity_type": HOST_TYPE, "key": {"realm": key[0], "stable_id": key[1]}}}
+    return {f"{side}_key": {"entity_type": HOST_TYPE, "key": _key_ref(key)}}
+
+
+def _key_ref(key: tuple[str, str]) -> dict[str, str]:
+    """A shared host named by key, each entry spelled as computing_core declares it."""
+    return {key_dimensions.HOST_TYPE_ENTRY: key[0], "stable_id": key[1]}
 
 
 def packages_of(software: list[dict[str, Any]] | None, os_name: Any) -> list[tuple[str, str, str]]:
@@ -102,8 +108,10 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
         minted = key not in held_hosts
         if minted:
             # The shared-fact rule: key fields only, no dimension of this plugin's own.
-            nodes.append({"entity": {"ref": _host_ref(key), "entity_type": HOST_TYPE, "name": key[1], "dimensions": dict(host_dims)},
-                          "node": {"realm": key[0], "stable_id": key[1]}})
+            # The host type is identity, so it rides on the envelope's dimensions (key_dimensions.HOST_TYPE).
+            nodes.append({"entity": {"ref": _host_ref(key), "entity_type": HOST_TYPE, "name": key[1],
+                                     "dimensions": {**host_dims, key_dimensions.HOST_TYPE: key[0]}},
+                          "node": {"stable_id": key[1]}})
             counters["shared_hosts_created"] = counters.get("shared_hosts_created", 0) + 1
         for host_id in host_ids:
             edges.append({"entity": {"ref": f"e-tracks-host-{host_id}", "entity_type": "edge", "name": TRACKS_HOST, "dimensions": {}},
@@ -117,6 +125,6 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
         # Qualys claim would propose retiring what another scanner saw (PR #87 review). Scoping a claim to its
         # writer is the reserved claim `dimensions` field (unified-systems-com/tap#907); until then Qualys does not
         # retire installs it no longer sees.
-        claims.append({"edge_type": INSTALLS_PACKAGE, "anchor": {"entity_type": HOST_TYPE, "key": {"realm": key[0], "stable_id": key[1]}},
+        claims.append({"edge_type": INSTALLS_PACKAGE, "anchor": {"entity_type": HOST_TYPE, "key": _key_ref(key)},
                        "direction": "outbound", "read": "partial"})
     return nodes, edges, claims, counters

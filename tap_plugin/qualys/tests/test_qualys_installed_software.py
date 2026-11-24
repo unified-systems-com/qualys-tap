@@ -136,9 +136,9 @@ _BASE = {"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": I
 _ASSETS = {"1001": {"software": [{"name": "bash", "version": "5.1-6ubuntu1"}]}}
 
 @pytest.mark.django_db
-class TestTheClaimStaysWithItsEdges:
+class TestAHeldHostAtAnyBound:
     @pytest.mark.spec("req-qualys-installed-software-2")
-    def test_a_held_hosts_claim_rides_with_all_its_installs_at_any_bound(self, secrets) -> None:
+    def test_every_install_is_written_once_and_the_claim_proposes_nothing(self, secrets) -> None:
         from tap_plugin.qualys.decompose import documents
 
         assert create_node(shared_host.HOST_TYPE, {"realm": "aws-ec2", "stable_id": INSTANCE, "name": "web-1"}).success
@@ -169,8 +169,11 @@ class TestTheClaimStaysWithItsEdges:
         for bound in (1, 2, 3, 50):
             docs = documents(captured["result"], captured["run"], max_keys=bound)
             batches = [d["batches"][0] for d in docs]
-            with_claim = [i for i, b in enumerate(batches) for c in b.get("edge_cases", {}).get("authority", [])
-                          if c["edge_type"] == shared_host.INSTALLS_PACKAGE]
-            with_installs = {i for i, b in enumerate(batches) for e in b["edges"] if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE}
-            assert len(with_claim) == 1 and with_installs == {with_claim[0]}, (bound, with_claim, with_installs)
+            claims = [c for b in batches for c in b.get("edge_cases", {}).get("authority", []) if c["edge_type"] == shared_host.INSTALLS_PACKAGE]
+            installs = [e for b in batches for e in b["edges"] if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE]
+            assert [c["read"] for c in claims] == ["partial"], bound
+            assert sorted(e["edge"]["to_key"]["key"]["name"] for e in installs) == ["bash", "openssl"], bound
+            first_install = min(i for i, b in enumerate(batches) for e in b["edges"] if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE)
+            last_package = max(i for i, b in enumerate(batches) for n in b["nodes"] if n["entity"]["entity_type"] == "computing_core__package")
+            assert first_install > last_package, bound  # after the packages it names, never in the opening
 

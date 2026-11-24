@@ -758,7 +758,7 @@ The installs claim (`req-grid-reconcile-edge-authority`, outbound from the share
 | --- | --- | :---: | --- | --- |
 | req-qualys-installed-software-1 | The Instance Installs Its Packages | Proposed | An EC2 host whose software was read becomes `computing_core__host ("aws-ec2", instance id)` with key fields only, `TRACKS_HOST__qualys` from the Qualys host, and `INSTALLS_PACKAGE` to each package whose ecosystem and version are unambiguous; a host with no issuer's id gets none. | `test_qualys_installed_software.py::TestHostKey`, `TestOnTheGrid`. |
 | req-qualys-installed-software-2 | Held Hosts Kept, Unread Software Silent | Proposed | A shared host another plugin holds keeps every field and gains the edges; a run that read no software writes no shared host and no installs. | `TestOnTheGrid.test_a_host_another_plugin_holds_is_linked_and_never_rewritten`, `test_no_software_read_means_no_shared_host_and_no_installs`. |
-| req-qualys-installed-software-3 | No Complete Claim On A Shared Host | Proposed | The installs claim on the shared host is always `partial`, so a Qualys run never proposes retiring an install another scanner wrote; it rides in the batch with that host's install edges. | `test_the_installs_claim_is_never_complete_on_a_shared_host`, `TestTheClaimStaysWithItsEdges`. |
+| req-qualys-installed-software-3 | No Complete Claim On A Shared Host | Proposed | The installs claim on the shared host is always `partial`, so a Qualys run never proposes retiring an install another scanner wrote, and every install of a host already on the grid is written once, after the packages it names, at any batch bound. | `test_the_installs_claim_is_never_complete_on_a_shared_host`, `TestAHeldHostAtAnyBound`. |
 
 ### Chunked Write
 ----

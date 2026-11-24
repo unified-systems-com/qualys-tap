@@ -19,11 +19,11 @@ dynamic = ["version"]
 # not a package dependency. `requests` is the read-only transport and `defusedxml` parses Qualys's
 # XML (req-qualys-transport); both are pure Python over the system OpenSSL (req-qualys-fips).
 # requests stays a range on purpose: tap's uv.lock pins it, and a plugin pin would move tap's locked
-# version (org-bots renovate/preset.js, tap#1220). computing-core-tap is floored at 0.11.1: 0.11.0 keys a
-# host on the tap.computing.host_type dimension (#103), 0.11.1 keys network_interface (#105); the shared host writes both. defusedxml is not in tap's lock, so it is pinned
+# version (org-bots renovate/preset.js, tap#1220). computing-core-tap is floored at 0.11.2: 0.11.0 keys a
+# host on the tap.computing.host_type dimension (#103), 0.11.1 keys network_interface (#105), 0.11.2 adds AVAILABLE_AT_IP_ADDRESS (#108); the shared host writes all three. defusedxml is not in tap's lock, so it is pinned
 # exactly, as the fleet's Renovate rule pins every other third-party runtime dependency.
 dependencies = [
-    "computing-core-tap>=0.11.1",
+    "computing-core-tap>=0.11.2",
     "compliance-core-tap",
     "requests>=2.34.2,<3",
     "defusedxml==0.7.1",

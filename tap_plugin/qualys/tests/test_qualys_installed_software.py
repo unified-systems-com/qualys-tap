@@ -121,3 +121,44 @@ class TestOnTheGrid:
         assert claims[0]["read"] == "complete" and claims[0]["direction"] == "outbound"
         _, edges, claims, _ = shared_host.build([{**base, "os": "Windows Server 2019"}], assets, Grid())
         assert claims[0]["read"] == "partial" and not [e for e in edges if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE]
+
+
+@pytest.mark.django_db
+class TestTheClaimStaysWithItsEdges:
+    @pytest.mark.spec("req-qualys-installed-software-2")
+    def test_a_held_hosts_claim_rides_with_all_its_installs_at_any_bound(self, secrets) -> None:
+        from tap_plugin.qualys.decompose import documents
+
+        assert create_node(shared_host.HOST_TYPE, {"realm": "aws-ec2", "stable_id": INSTANCE, "name": "web-1"}).success
+        captured: dict[str, Any] = {}
+
+        def capture(result: Any, run: Any) -> None:
+            captured["result"], captured["run"] = result, run
+
+        import tap_plugin.qualys.collectors.qualys_collector as qc
+
+        original = qc.documents
+        router = _router()
+        collector = None
+
+        def spy(result: Any, run: Any, **kw: Any) -> Any:
+            capture(result, run)
+            return original(result, run, **kw)
+
+        import pytest as _pytest
+
+        mp = _pytest.MonkeyPatch()
+        mp.setattr(qc, "documents", spy)
+        try:
+            collector = _collector(mp, router)
+            collector.run()
+        finally:
+            mp.undo()
+        for bound in (1, 2, 3, 50):
+            docs = documents(captured["result"], captured["run"], max_keys=bound)
+            batches = [d["batches"][0] for d in docs]
+            with_claim = [i for i, b in enumerate(batches) for c in b.get("edge_cases", {}).get("authority", [])
+                          if c["edge_type"] == shared_host.INSTALLS_PACKAGE and c["read"] == "complete"]
+            with_installs = {i for i, b in enumerate(batches) for e in b["edges"] if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE}
+            assert len(with_claim) == 1 and with_installs == {with_claim[0]}, (bound, with_claim, with_installs)
+

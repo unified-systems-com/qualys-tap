@@ -860,7 +860,24 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
     for ref, e in grouped_edges:
         groups[find(ref)]["edges"].append(e)
     # Vulnerability records and packages before the QIDs, whose CVE edges name them by key.
-    rest_extra = [{"nodes": [], "edges": [e]} for e in keyed_only]
+    # Key-only edges a claim covers stay together, one group per claim, so the claim and its whole asserted set
+    # land in one batch even past the bound (PR #87 review); any other key-only edge is a group of its own.
+    def _claim_end(claim: dict[str, Any]) -> str:
+        return "from_key" if claim["direction"] == "outbound" else "to_key"
+
+    def _same_anchor(named: dict[str, Any] | None, anchor: dict[str, Any]) -> bool:
+        return bool(named) and named["entity_type"] == anchor["entity_type"] and named["key"] == anchor["key"]
+
+    claim_groups: dict[int, dict[str, list[dict[str, Any]]]] = {}
+    loose: list[dict[str, Any]] = []
+    for e in keyed_only:
+        owner = next((i for i, c in enumerate(result.authority)
+                      if c["edge_type"] == e["edge"]["edge_type"] and _same_anchor(e["edge"].get(_claim_end(c)), c["anchor"])), None)
+        if owner is None:
+            loose.append(e)
+        else:
+            claim_groups.setdefault(owner, {"nodes": [], "edges": []})["edges"].append(e)
+    rest_extra = list(claim_groups.values()) + [{"nodes": [], "edges": [e]} for e in loose]
     shared = sorted((g for g in groups.values() if all(n["entity"]["entity_type"] in _SHARED_TYPES for n in g["nodes"])),
                     key=lambda g: any(n["entity"]["entity_type"] == QualysQid.ENTITY_TYPE for n in g["nodes"]))
     rest = [g for g in groups.values() if not all(n["entity"]["entity_type"] in _SHARED_TYPES for n in g["nodes"])]
@@ -891,17 +908,21 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
             names = names_by_type.get(n["entity"]["entity_type"])
             if names is not None:
                 index[(n["entity"]["entity_type"], tuple(n["node"].get(k) for k in names))] = number
-    # An anchor the grid already holds is not a node of any batch; its claim rides with the batch whose edges
-    # name it by key, since those edges are the claim's asserted set.
-    for number, chunk in enumerate(chunks):
-        for e in chunk["edges"]:
-            for end in ("from_key", "to_key"):
-                named = e["edge"].get(end)
-                if named and named["entity_type"] in names_by_type:
-                    index.setdefault((named["entity_type"], tuple(named["key"].get(k) for k in names_by_type[named["entity_type"]])), number)
+    # An anchor the grid already holds is not a node of any batch. Its claim rides with the batch holding the
+    # edges it asserts: its own edge type, naming the anchor by key at the claim's own end, never with another
+    # edge that merely names the same node (PR #87 review).
+    def _asserting_chunk(claim: dict[str, Any]) -> int | None:
+        for number, chunk in enumerate(chunks):
+            for e in chunk["edges"]:
+                if e["edge"]["edge_type"] == claim["edge_type"] and _same_anchor(e["edge"].get(_claim_end(claim)), claim["anchor"]):
+                    return number
+        return None
+
     for claim in result.authority:
         anchor = claim["anchor"]
         at = index.get((anchor["entity_type"], tuple(anchor["key"].get(k) for k in names_by_type[anchor["entity_type"]])))
+        if at is None:
+            at = _asserting_chunk(claim)
         if at is None:
             seal_claims.append({**claim, "read": "partial"})
         else:

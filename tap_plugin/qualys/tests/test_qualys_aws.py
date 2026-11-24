@@ -40,7 +40,7 @@ METADATA = {
     "latest/meta-data/public-ipv4": "",
     "instanceState": "running",
     "vpcId": "vpc-0123abcd",
-    "subnetId": "subnet-0456efgh",
+    "subnetId": "subnet-0456efab",
     "groupId": "sg-0aaa1111",
     "groupName": "web",
     "ownerId": "123456789012",
@@ -99,15 +99,15 @@ class TestMinting:
         assert instance.tags == {"Name": "web-1", "Env": "prod", "Owner": ""}
         assert instance.public_ip is None  # reported empty, so not written
         assert _model("Vpc").objects.filter(vpc_id="vpc-0123abcd").exists()
-        assert _model("Subnet").objects.get(subnet_id="subnet-0456efgh").availability_zone == "us-east-1a"
+        assert _model("Subnet").objects.get(subnet_id="subnet-0456efab").availability_zone == "us-east-1a"
         assert _model("SecurityGroup").objects.get(group_id="sg-0aaa1111").name == "web"
         assert _model("AwsAccount").objects.filter(account_id="123456789012").exists()
         assert _model("AwsAccountRegion").objects.filter(account_id="123456789012", region_code="us-east-1").exists()
-        assert _edge_pairs("PARTITIONED_INTO_SUBNET__aws_core") == {("vpc-0123abcd", "subnet-0456efgh")}
+        assert _edge_pairs("PARTITIONED_INTO_SUBNET__aws_core") == {("vpc-0123abcd", "subnet-0456efab")}
         assert _edge_pairs("RESIDES_IN_VPC__aws_core") == {("web", "vpc-0123abcd")}
         assert _edge_pairs("HOSTS_EC2_INSTANCE__aws_core") == {("123456789012/us-east-1", INSTANCE)}
         # A VPC, subnet or security group gets no account or region edge: a shared VPC is another account's.
-        assert not {p for p in _edge_pairs("BELONGS_TO_ACCOUNT__aws_core") if p[0] in {"vpc-0123abcd", "subnet-0456efgh"}}
+        assert not {p for p in _edge_pairs("BELONGS_TO_ACCOUNT__aws_core") if p[0] in {"vpc-0123abcd", "subnet-0456efab"}}
         assert not _edge_pairs("HOSTS_VPC__aws_core") and not _edge_pairs("HOSTS_SUBNET__aws_core")
         # The Qualys host links to the instance it minted.
         host = QualysHost.objects.get(subscription_key=KEY, host_id="1001")
@@ -126,7 +126,7 @@ class TestMinting:
         vpc = _model("Vpc").objects.get(vpc_id="vpc-0123abcd")
         assert (vpc.name, vpc.cidr_block, vpc.tags) == ("main", "10.9.0.0/16", {"k": "v"})
         # Edges between a minted node and a held one are written; between two held ones they are aws_core's.
-        assert _edge_pairs("PARTITIONED_INTO_SUBNET__aws_core") == {("main", "subnet-0456efgh")}
+        assert _edge_pairs("PARTITIONED_INTO_SUBNET__aws_core") == {("main", "subnet-0456efab")}
         assert _edge_pairs("HOSTS_EC2_INSTANCE__aws_core") == {("123456789012/us-east-1", "web-1 (boto)")}
         from tap_plugin.qualys.models import QualysScanRun
 
@@ -166,6 +166,20 @@ class TestObserve:
         assert seen["account_id"] is None and seen["vpc_id"] is None and seen["tags"] is None
         # Two groups are both minted, but neither is named: the pairing of several names is not documented.
         assert seen["security_groups"] == ["sg-0aaa1111", "sg-0bbb2222"] and seen["group_names"] == {}
+
+    def test_a_joined_or_misshapen_value_never_becomes_an_id(self) -> None:
+        meta = {**METADATA, "groupId": "sg-0aaa1111,sg-0bbb2222", "vpcId": "vpc-0123abcd,vpc-0456cdef", "subnetId": "subnet-xyz",
+                "latest/dynamic/instance-identity/document/region": "Virginia"}
+        seen = aws_mint.observe({"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": INSTANCE, "ec2_metadata": meta, "cloud_tags": None})
+        assert seen["security_groups"] == ["sg-0aaa1111", "sg-0bbb2222"]  # a comma is a separator, never part of an id
+        assert seen["vpc_id"] is None and seen["subnet_id"] is None and seen["region"] is None
+        assert aws_mint.observe({"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": "i-not/hex"}) is None
+
+    def test_the_keys_match_aws_cores_own(self) -> None:
+        from tap_grid.registry import get_model_class
+
+        for entity_type, names in aws_mint.KEYS.items():
+            assert tuple(get_model_class(entity_type).NATURAL_KEY) == names, entity_type
 
 
 class TestTheContract:

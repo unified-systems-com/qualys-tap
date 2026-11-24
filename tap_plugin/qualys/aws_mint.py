@@ -16,6 +16,7 @@ holds is aws_core's to write. A VPC, subnet or security group gets no account or
 names the instance's account, and a shared VPC belongs to another one.
 """
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -43,6 +44,9 @@ KEYS: dict[str, tuple[str, ...]] = {
 TYPES = frozenset(KEYS)
 
 _DIGITS12 = frozenset("0123456789")
+#: AWS's id shapes: a prefix and 8 or 17 hex digits. A value of any other shape is left out, never minted.
+_AWS_ID = re.compile(r"(i|sg|vpc|subnet)-[0-9a-f]{8}(?:[0-9a-f]{9})?")
+_REGION = re.compile(r"[a-z]{2}(?:-gov|-iso[a-z]*)?-[a-z]+-[0-9]{1,2}")
 
 
 class AwsView(Protocol):
@@ -71,10 +75,10 @@ def _value(meta: dict[str, Any], path: str) -> str | None:
 
 
 def _ids(text: str | None, prefix: str) -> list[str]:
-    """Ids of one kind from an instance-metadata value, one per line (security-group-ids lists them so)."""
+    """Ids of one kind in a metadata value, split on commas and whitespace; only tokens of AWS's id shape count."""
     if not text:
         return []
-    return sorted({part for part in text.split() if part.startswith(prefix) and len(part) <= 64})
+    return sorted({part for part in re.split(r"[\s,]+", text) if part.startswith(prefix) and _AWS_ID.fullmatch(part)})
 
 
 def _account(value: str | None) -> str | None:
@@ -102,16 +106,18 @@ def observe(host: dict[str, Any]) -> dict[str, Any] | None:
     interface id and no availability-zone id is returned, so neither is minted.
     """
     instance = host.get("cloud_resource_id")
-    if not (host.get("cloud_provider") == "AWS" and host.get("cloud_service") == "EC2" and isinstance(instance, str) and instance.startswith("i-")):
+    if not (host.get("cloud_provider") == "AWS" and host.get("cloud_service") == "EC2" and isinstance(instance, str)
+            and instance.startswith("i-") and _AWS_ID.fullmatch(instance)):
         return None
     meta = host.get("ec2_metadata") or {}
+    region = _value(meta, DOC + "region")
     groups = _ids(_value(meta, "groupId"), "sg-")
     names = (_value(meta, "groupName") or "").split()
     tags = host.get("cloud_tags")
     return {
         "instance_id": instance,
         "account_id": _account(_value(meta, DOC + "accountId")) or _account(_value(meta, "ownerId")),
-        "region": _value(meta, DOC + "region"),
+        "region": region if region and _REGION.fullmatch(region) else None,
         "zone_name": _value(meta, DOC + "availabilityZone"),
         "ami_id": _value(meta, DOC + "imageId") or _value(meta, META + "ami-id"),
         "instance_type": _value(meta, DOC + "instanceType") or _value(meta, META + "instance-type"),

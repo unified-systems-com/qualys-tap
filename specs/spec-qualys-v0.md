@@ -748,7 +748,9 @@ What is installed on each machine, on the shared vocabulary every scanner uses, 
 - **`TRACKS_HOST__qualys`**, from the Qualys host to the shared host, beside `TRACKS_EC2_INSTANCE__qualys` (the aws_core record).
 - **`INSTALLS_PACKAGE__computing_core`**, from the shared host to each package the software list names, with an absent package created with its key fields. The ecosystem comes from the host's OS by the package-table parser's rule: Debian and Ubuntu `deb`, RPM distributions `rpm`. An OS it cannot place writes no package, and neither does an ambiguous version (a deb epoch, an rpm architecture suffix). None is guessed.
 
-Each host's installs are claimed whole (`req-grid-reconcile-edge-authority`, outbound from the host) when its software list came back and its OS was placed; otherwise the claim says partial and proposes nothing. A host whose software was not read this run gets no shared host, edge or claim.
+Two Qualys hosts naming one instance (a re-registered agent, a stale record) are each linked, and the shared host installs what either reports.
+
+The installs claim (`req-grid-reconcile-edge-authority`, outbound from the shared host) is always `partial`, so it proposes no removal. A claim's scope is every live edge of its type at the anchor, whoever wrote it (`-2`), and a shared host's installs are every scanner's, so a complete Qualys claim would propose retiring packages another scanner saw. Qualys therefore does not retire an install it no longer sees. Scoping a claim to its writer is the claim's reserved `dimensions` field (unified-systems-com/tap#907). A host whose software was not read this run gets no shared host, edge or claim.
 
 #### Acceptance Criteria
 
@@ -756,6 +758,7 @@ Each host's installs are claimed whole (`req-grid-reconcile-edge-authority`, out
 | --- | --- | :---: | --- | --- |
 | req-qualys-installed-software-1 | The Instance Installs Its Packages | Proposed | An EC2 host whose software was read becomes `computing_core__host ("aws-ec2", instance id)` with key fields only, `TRACKS_HOST__qualys` from the Qualys host, and `INSTALLS_PACKAGE` to each package whose ecosystem and version are unambiguous; a host with no issuer's id gets none. | `test_qualys_installed_software.py::TestHostKey`, `TestOnTheGrid`. |
 | req-qualys-installed-software-2 | Held Hosts Kept, Unread Software Silent | Proposed | A shared host another plugin holds keeps every field and gains the edges; a run that read no software writes no shared host and no installs. | `TestOnTheGrid.test_a_host_another_plugin_holds_is_linked_and_never_rewritten`, `test_no_software_read_means_no_shared_host_and_no_installs`. |
+| req-qualys-installed-software-3 | No Complete Claim On A Shared Host | Proposed | The installs claim on the shared host is always `partial`, so a Qualys run never proposes retiring an install another scanner wrote; it rides in the batch with that host's install edges. | `test_the_installs_claim_is_never_complete_on_a_shared_host`, `TestTheClaimStaysWithItsEdges`. |
 
 ### Chunked Write
 ----

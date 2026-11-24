@@ -104,24 +104,36 @@ class TestOnTheGrid:
         _collector(monkeypatch, _router(software="")).run()
         assert not _host_model().objects.filter(stable_id=INSTANCE).exists() and not _installs()
 
-    def test_the_installs_claim_is_whole_only_where_the_os_is_known(self) -> None:
-        class Grid:
-            def held_keys(self, entity_type: str, keys: Any) -> set[Any]:
-                return set()
-
-            def held_packages(self, keys: Any) -> set[Any]:
-                return set()
-
-            def default_dimensions(self, entity_type: str) -> dict[str, str]:
-                return {}
-
-        base = {"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": INSTANCE, "host_id": "1001"}
-        assets = {"1001": {"software": [{"name": "bash", "version": "5.1-6ubuntu1"}]}}
-        _, _, claims, _ = shared_host.build([{**base, "os": "Ubuntu 22.04"}], assets, Grid())
-        assert claims[0]["read"] == "complete" and claims[0]["direction"] == "outbound"
-        _, edges, claims, _ = shared_host.build([{**base, "os": "Windows Server 2019"}], assets, Grid())
+    @pytest.mark.spec("req-qualys-installed-software-3")
+    def test_the_installs_claim_is_never_complete_on_a_shared_host(self) -> None:
+        _, edges, claims, _ = shared_host.build([{**_BASE, "os": "Ubuntu 22.04"}], _ASSETS, _NoGrid())
+        assert [c["read"] for c in claims] == ["partial"] and claims[0]["direction"] == "outbound"
+        _, edges, claims, _ = shared_host.build([{**_BASE, "os": "Windows Server 2019"}], _ASSETS, _NoGrid())
         assert claims[0]["read"] == "partial" and not [e for e in edges if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE]
 
+    @pytest.mark.spec("req-qualys-installed-software-1")
+    def test_two_qualys_hosts_on_one_instance_are_both_linked_and_both_counted(self) -> None:
+        other = {**_BASE, "host_id": "1002", "os": "Ubuntu 22.04"}
+        assets = {**_ASSETS, "1002": {"software": [{"name": "curl", "version": "7.81.0-1ubuntu1.15"}]}}
+        _, edges, claims, _ = shared_host.build([{**_BASE, "os": "Ubuntu 22.04"}, other], assets, _NoGrid())
+        assert {e["edge"]["from_ref"] for e in edges if e["edge"]["edge_type"] == shared_host.TRACKS_HOST} == {"h1001", "h1002"}
+        assert sorted(e["edge"]["to_key"]["key"]["name"] for e in edges if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE) == ["bash", "curl"]
+        assert len(claims) == 1  # one scope per shared host (req-grid-reconcile-edge-authority-4)
+
+
+class _NoGrid:
+    def held_keys(self, entity_type: str, keys: Any) -> set[Any]:
+        return set()
+
+    def held_packages(self, keys: Any) -> set[Any]:
+        return set()
+
+    def default_dimensions(self, entity_type: str) -> dict[str, str]:
+        return {}
+
+
+_BASE = {"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": INSTANCE, "host_id": "1001"}
+_ASSETS = {"1001": {"software": [{"name": "bash", "version": "5.1-6ubuntu1"}]}}
 
 @pytest.mark.django_db
 class TestTheClaimStaysWithItsEdges:
@@ -158,7 +170,7 @@ class TestTheClaimStaysWithItsEdges:
             docs = documents(captured["result"], captured["run"], max_keys=bound)
             batches = [d["batches"][0] for d in docs]
             with_claim = [i for i, b in enumerate(batches) for c in b.get("edge_cases", {}).get("authority", [])
-                          if c["edge_type"] == shared_host.INSTALLS_PACKAGE and c["read"] == "complete"]
+                          if c["edge_type"] == shared_host.INSTALLS_PACKAGE]
             with_installs = {i for i, b in enumerate(batches) for e in b["edges"] if e["edge"]["edge_type"] == shared_host.INSTALLS_PACKAGE}
             assert len(with_claim) == 1 and with_installs == {with_claim[0]}, (bound, with_claim, with_installs)
 

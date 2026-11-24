@@ -27,6 +27,7 @@ from tap_plugin.qualys.tests.test_qualys_collector import (  # noqa: F401
     no_sockets,
 )
 
+from tap_grid.dimension_names import view
 from tap_grid.models import Edge, Entity
 from tap_grid.services import create_node
 
@@ -106,9 +107,16 @@ class TestMinting:
         assert _edge_pairs("PARTITIONED_INTO_SUBNET__aws_core") == {("vpc-0123abcd", "subnet-0456efab")}
         assert _edge_pairs("RESIDES_IN_VPC__aws_core") == {("web", "vpc-0123abcd")}
         assert _edge_pairs("HOSTS_EC2_INSTANCE__aws_core") == {("123456789012/us-east-1", INSTANCE)}
-        # A VPC, subnet or security group gets no account or region edge: a shared VPC is another account's.
-        assert not {p for p in _edge_pairs("BELONGS_TO_ACCOUNT__aws_core") if p[0] in {"vpc-0123abcd", "subnet-0456efab"}}
+        assert _edge_pairs("RESIDES_IN_SUBNET__aws_core") == {(INSTANCE, "subnet-0456efab")}
+        # Account and region are aws_core's dimensions, never a BELONGS_TO_ACCOUNT edge (req-aws-core-account-dimension).
+        assert not _edge_pairs("BELONGS_TO_ACCOUNT__aws_core")
+        assert view(instance.entity.dimensions)["aws.account"] == "123456789012" and view(instance.entity.dimensions)["aws.region"] == "us-east-1"
+        # A VPC gets its region but not the instance's account: a shared VPC is another account's.
+        vpc_dims = view(_model("Vpc").objects.get(vpc_id="vpc-0123abcd").entity.dimensions)
+        assert vpc_dims.get("aws.region") == "us-east-1" and "aws.account" not in vpc_dims
         assert not _edge_pairs("HOSTS_VPC__aws_core") and not _edge_pairs("HOSTS_SUBNET__aws_core")
+        # This stack's aws_core predates USES_SECURITY_GROUP__aws_core, so the edge is not written.
+        assert not Edge.objects.filter(edge_type=aws_mint.USES_SECURITY_GROUP).exists()
         # The Qualys host links to the instance it minted.
         host = QualysHost.objects.get(subscription_key=KEY, host_id="1001")
         assert host.ec2_metadata["keyName"] == "deploy" and host.ec2_metadata["latest/meta-data/public-ipv4"] == ""
@@ -146,6 +154,9 @@ class TestMinting:
             def held_keys(self, entity_type: str, keys: Any) -> None:
                 return None
 
+            def has_edge_type(self, slug: str) -> bool:
+                return False
+
             def default_dimensions(self, entity_type: str) -> dict[str, str]:
                 return {}
 
@@ -180,6 +191,25 @@ class TestObserve:
 
         for entity_type, names in aws_mint.KEYS.items():
             assert tuple(get_model_class(entity_type).NATURAL_KEY) == names, entity_type
+
+
+class TestTheGroupEdge:
+    def test_the_group_edge_is_written_when_aws_core_defines_it(self) -> None:
+        class Grid:
+            def held_keys(self, entity_type: str, keys: Any) -> set[Any]:
+                return set()
+
+            def has_edge_type(self, slug: str) -> bool:
+                return True
+
+            def default_dimensions(self, entity_type: str) -> dict[str, str]:
+                return {}
+
+        host = {"cloud_provider": "AWS", "cloud_service": "EC2", "cloud_resource_id": INSTANCE, "ec2_metadata": METADATA, "cloud_tags": None}
+        got = aws_mint.mint([host], Grid())
+        uses = [e for e in got.edges if e["edge"]["edge_type"] == aws_mint.USES_SECURITY_GROUP]
+        assert [(e["edge"]["from_ref"], e["edge"]["to_ref"]) for e in uses] == [(f"aws:aws_ec2_instance:{INSTANCE}", "aws:aws_security_group:sg-0aaa1111")]
+        assert not [e for e in got.edges if e["edge"]["edge_type"] == "BELONGS_TO_ACCOUNT__aws_core"]
 
 
 class TestTheContract:

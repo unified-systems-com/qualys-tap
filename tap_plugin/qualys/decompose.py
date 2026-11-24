@@ -124,6 +124,10 @@ class GridView(Protocol):
         """Of these natural keys of an aws_core type, those the grid holds; None when aws_core is not installed."""
         ...
 
+    def has_edge_type(self, slug: str) -> bool:
+        """Whether the installed plugins define this edge type."""
+        ...
+
     def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
         """Of these ids, those ``aws_core`` holds as an EC2 instance's ``instance_id``; None without ``aws_core``."""
         ...

@@ -741,13 +741,15 @@ Qualys's host detection reports what AWS's instance metadata says about each EC2
 
 `tap_plugin/qualys/aws_mint.py` reads each host Qualys reports as provider `AWS`, service `EC2`, with an `i-` `CLOUD_RESOURCE_ID`. It uses the `METADATA/EC2` attribute names a live subscription returned (field report, 2026-11-23, Q38d): the instance identity document under `latest/dynamic/instance-identity/document/`, a few `latest/meta-data/` paths, and flat EC2 API names. It also reads the host's `CLOUD_PROVIDER_TAGS`. From these it derives:
 
-- the **EC2 instance**: `instance_id`; `ec2_type` (`instanceType`); `ami_id` (`imageId`); `private_ip` (`privateIp`, or `local-ipv4`); `public_ip` (`public-ipv4`); `state` (`instanceState`); and `tags` as aws_core's `{Key: Value}` map;
+- the **EC2 instance**: `instance_id`; `ec2_type` (`instanceType`); `ami_id` (`imageId`); `private_ip` (`privateIp`, or `local-ipv4`); `public_ip` (`public-ipv4`); `state` (`instanceState`); and `tags` as aws_core's `{Key: Value}` map. It gets `RESIDES_IN_SUBNET__aws_core` to its subnet and, where the installed aws_core defines it, `USES_SECURITY_GROUP__aws_core` to each group (unified-systems-com/aws-core-tap#293);
 - the **VPC** (`vpcId`) and the **subnet** (`subnetId`, its `availability_zone` from `availabilityZone`), with `PARTITIONED_INTO_SUBNET__aws_core`;
 - each **security group** (`groupId`), named by `groupName` only when exactly one of each is reported, with `RESIDES_IN_VPC__aws_core`;
-- the **account** (`accountId`, else `ownerId`, twelve digits), with the instance's `BELONGS_TO_ACCOUNT__aws_core`;
-- the **region**, and the **account-region**, which `HOSTS_EC2_INSTANCE__aws_core` and `BELONGS_TO_ACCOUNT__aws_core`.
+- the **account** (`accountId`, else `ownerId`, twelve digits);
+- the **region**, and the **account-region**, which `HOSTS_EC2_INSTANCE__aws_core`.
 
-Qualys returns no network-interface id and no availability-zone id, so neither an interface nor a zone node is minted. A value of the wrong shape, or one naming more than one id where one is expected, is left out, never guessed; an empty value is not written. A VPC, subnet or security group gets no account or region edge, because the metadata names the instance's account, and a shared VPC or subnet belongs to another one. aws_core defines no edge from an instance to a subnet or security group, so that relation is not written until it does (Q39).
+Which account and region a record is in follows aws_core's own rule (`req-aws-core-account-dimension`): the `aws.account` and `aws.region` dimensions, stamped on the instance and the account-region, never a `BELONGS_TO_ACCOUNT__aws_core` edge, which aws_core writes only for a resource another account owns. v0.8.0 wrote that edge, and this corrects it (George, 2026-11-23).
+
+Qualys returns no network-interface id and no availability-zone id, so neither an interface nor a zone node is minted. A value of the wrong shape, or one naming more than one id where one is expected, is left out, never guessed; an empty value is not written. A VPC, subnet or security group gets the `aws.region` dimension but not `aws.account`, because the metadata names the instance's account, and a shared VPC or subnet belongs to another one.
 
 Every attribute the read returns is kept on the Qualys host, whether or not it is minted. `ec2_metadata` holds each name's `VALUE`, and `ec2_metadata_status` holds its `LAST_STATUS`, `LAST_SUCCESS_DATE`, `LAST_ERROR_DATE` and `LAST_ERROR`, all as returned. These three dates and the error are optional in the DTD, so consuming them can refuse no page. Names vary by host and are kept as sent, including the doubled `latest/meta-data/latest/meta-data/ami-launch-index`.
 

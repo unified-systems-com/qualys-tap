@@ -116,6 +116,11 @@ class GridStore:
         rows = model.objects.filter(**{f"{names[0]}__in": {k[0] for k in keys}}).values_list(*names)
         return {tuple(row) for row in rows} & keys
 
+    def has_edge_type(self, slug: str) -> bool:
+        from tap_grid.constraints import get_edge_type_constraints
+
+        return get_edge_type_constraints(slug) is not None
+
     def ec2_instances(self, instance_ids: Iterable[str]) -> set[str] | None:
         """Of these ids, those aws_core holds by exact ``instance_id``; None when aws_core is not installed.
 

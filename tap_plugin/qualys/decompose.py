@@ -28,7 +28,7 @@ from typing import Any, Protocol
 from urllib.parse import parse_qs, urlsplit
 
 from django.db import models as dj_models
-
+from tap_plugin.qualys import aws_mint, neutral, parsers, shared_host
 from tap_plugin.qualys.identity import subscription_key as derive_subscription_key
 from tap_plugin.qualys.models.detection import QualysDetection
 from tap_plugin.qualys.models.host import QualysHost
@@ -36,7 +36,6 @@ from tap_plugin.qualys.models.qid import QualysQid
 from tap_plugin.qualys.models.scan_run import QualysScanRun
 from tap_plugin.qualys.models.subscription import QualysSubscription
 from tap_plugin.qualys.models.tag import QualysTag
-from tap_plugin.qualys import aws_mint, neutral, parsers
 from tap_plugin.qualys.parse import DetectionPage, KnowledgeBasePage
 from tap_plugin.qualys.read_kind import COMPLETE, NARROWER, WINDOW
 
@@ -648,6 +647,13 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     result.count("hosts", len(seen_hosts))
     result.count("detections", len(seen_detections))
     _inventory(key, run, grid, result, seen_hosts)
+    if run.host_assets:
+        host_nodes, host_edges, host_claims, host_counts = shared_host.build((h for page in pages for h in page.hosts), run.host_assets, grid)
+        result.nodes.extend(host_nodes)
+        result.edges.extend(host_edges)
+        result.authority.extend(host_claims)
+        for name, n in host_counts.items():
+            result.count(name, n)
     minted: set[str] | None = None
     if run.aws:
         aws = aws_mint.mint((h for page in pages for h in page.hosts), grid, run.host_assets or {})
@@ -819,6 +825,7 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
 
     hub_edges: list[dict[str, Any]] = []
     seal_edges: list[dict[str, Any]] = []
+    keyed_only: list[dict[str, Any]] = []
     grouped_edges: list[tuple[str, dict[str, Any]]] = []
     for e in result.edges:
         ends = [r for r in (e["edge"].get("from_ref"), e["edge"].get("to_ref")) if r is not None]
@@ -829,6 +836,11 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
             seal_edges.append(e)
             continue
         inner = [r for r in ends if r not in _HUBS]
+        if not ends:
+            # Both ends named by key: nothing batch-local joins it, so it rides with the body batches, after the
+            # shared records it may name (never in the opening, before they exist).
+            keyed_only.append(e)
+            continue
         if not inner:
             hub_edges.append(e)
             continue
@@ -848,21 +860,22 @@ def documents(result: Result, run: Run, *, max_keys: int | None = None) -> list[
     for ref, e in grouped_edges:
         groups[find(ref)]["edges"].append(e)
     # Vulnerability records and packages before the QIDs, whose CVE edges name them by key.
+    rest_extra = [{"nodes": [], "edges": [e]} for e in keyed_only]
     shared = sorted((g for g in groups.values() if all(n["entity"]["entity_type"] in _SHARED_TYPES for n in g["nodes"])),
                     key=lambda g: any(n["entity"]["entity_type"] == QualysQid.ENTITY_TYPE for n in g["nodes"]))
     rest = [g for g in groups.values() if not all(n["entity"]["entity_type"] in _SHARED_TYPES for n in g["nodes"])]
 
     chunks: list[dict[str, list[dict[str, Any]]]] = []
-    for kind in (shared, rest):
+    for kind in (shared, rest + rest_extra):
         current: dict[str, list[dict[str, Any]]] = {"nodes": [], "edges": []}
         for g in kind:
             size = len(g["nodes"]) + len(g["edges"])
-            if current["nodes"] and len(current["nodes"]) + len(current["edges"]) + size > max_keys:
+            if (current["nodes"] or current["edges"]) and len(current["nodes"]) + len(current["edges"]) + size > max_keys:
                 chunks.append(current)
                 current = {"nodes": [], "edges": []}
             current["nodes"].extend(g["nodes"])
             current["edges"].extend(g["edges"])
-        if current["nodes"]:
+        if current["nodes"] or current["edges"]:
             chunks.append(current)
 
     # Each authority claim rides with the batch holding its anchor, whose edges are the claim's asserted set. A

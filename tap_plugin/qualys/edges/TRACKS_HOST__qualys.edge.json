@@ -1,0 +1,17 @@
+{
+  "slug": "TRACKS_HOST__qualys",
+  "name": "Tracks Host",
+  "description": "This Qualys host is that computing_core host: the machine Qualys tracks, as every source that sees it keys it. Drawn for an EC2 host, whose computing_core host is (aws-ec2, instance id), when the run read its software (req-qualys-installed-software). A reference, beside TRACKS_EC2_INSTANCE__qualys: the aws_core instance is the AWS record, the computing_core host is the machine other scanners share.",
+  "sources": [
+    "qualys__qualys_host"
+  ],
+  "targets": [
+    "computing_core__host"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "observation"
+  }
+}

@@ -12,8 +12,11 @@ attributes, and its ``CLOUD_PROVIDER_TAGS``. The attribute names are the ones a 
 a value of the wrong shape, or one that names more than one id where one is expected, is left out, never guessed.
 
 Edges are aws_core's own, written only where one end was minted by this run: an edge between two nodes aws_core
-holds is aws_core's to write. A VPC, subnet or security group gets no account or region edge, because the metadata
-names the instance's account, and a shared VPC belongs to another one.
+holds is aws_core's to write. Which account and region a record is in follows aws_core's rule
+(``req-aws-core-account-dimension``): the ``aws.account`` and ``aws.region`` dimensions, never a
+``BELONGS_TO_ACCOUNT`` edge, which aws_core writes only for a resource another account owns. A VPC, subnet or
+security group gets the region but not the account: the metadata names the instance's account, and a shared VPC
+belongs to another one. ``USES_SECURITY_GROUP__aws_core`` is written only where the installed aws_core defines it.
 """
 
 import re
@@ -49,9 +52,18 @@ _AWS_ID = re.compile(r"(i|sg|vpc|subnet)-[0-9a-f]{8}(?:[0-9a-f]{9})?")
 _REGION = re.compile(r"[a-z]{2}(?:-gov|-iso[a-z]*)?-[a-z]+-[0-9]{1,2}")
 
 
+ACCOUNT_DIMENSION = "aws.account"
+REGION_DIMENSION = "aws.region"
+USES_SECURITY_GROUP = "USES_SECURITY_GROUP__aws_core"
+
+
 class AwsView(Protocol):
     def held_keys(self, entity_type: str, keys: Iterable[tuple[str, ...]]) -> set[tuple[str, ...]] | None:
         """Of these natural keys, those the grid holds for the type; None when aws_core is not installed."""
+        ...
+
+    def has_edge_type(self, slug: str) -> bool:
+        """Whether the installed plugins define this edge type (a newer aws_core may add one)."""
         ...
 
     def default_dimensions(self, entity_type: str) -> dict[str, str]: ...
@@ -142,44 +154,52 @@ def mint(hosts: Iterable[dict[str, Any]], grid: AwsView) -> Minted:
     if not seen:
         return out
     wanted: dict[str, dict[tuple[str, ...], dict[str, Any]]] = {t: {} for t in KEYS}
+    dims: dict[str, dict[tuple[str, ...], dict[str, str]]] = {t: {} for t in KEYS}
     links: set[tuple[str, str, tuple[str, ...], str, tuple[str, ...]]] = set()
+    group_edges = grid.has_edge_type(USES_SECURITY_GROUP)
 
-    def want(entity_type: str, key: tuple[str, ...], fields: dict[str, Any]) -> None:
+    def want(entity_type: str, key: tuple[str, ...], fields: dict[str, Any], where: dict[str, str | None]) -> None:
         held = wanted[entity_type].setdefault(key, {})
         for name, value in fields.items():
             if value is not None and held.get(name) is None:
                 held[name] = value  # first report wins; a later host never blanks what an earlier one gave
+        stamped = dims[entity_type].setdefault(key, {})
+        for name, value in where.items():
+            if value is not None:
+                stamped.setdefault(name, value)
 
     def link(slug: str, a_type: str, a: tuple[str, ...], b_type: str, b: tuple[str, ...]) -> None:
         links.add((slug, a_type, a, b_type, b))
 
     for o in seen:
         iid = (o["instance_id"],)
-        want(INSTANCE, iid, {"name": o["instance_id"], "instance_id": o["instance_id"], "ec2_type": o["instance_type"], "ami_id": o["ami_id"],
-                             "private_ip": o["private_ip"], "public_ip": o["public_ip"], "state": o["state"], "tags": o["tags"]})
         acct, region = o["account_id"], o["region"]
+        owned = {ACCOUNT_DIMENSION: acct, REGION_DIMENSION: region}
+        regional = {REGION_DIMENSION: region}
+        want(INSTANCE, iid, {"name": o["instance_id"], "instance_id": o["instance_id"], "ec2_type": o["instance_type"], "ami_id": o["ami_id"],
+                             "private_ip": o["private_ip"], "public_ip": o["public_ip"], "state": o["state"], "tags": o["tags"]}, owned)
         if acct:
-            want(ACCOUNT, (acct,), {"name": acct, "account_id": acct})
-            link("BELONGS_TO_ACCOUNT__aws_core", INSTANCE, iid, ACCOUNT, (acct,))
+            want(ACCOUNT, (acct,), {"name": acct, "account_id": acct}, {ACCOUNT_DIMENSION: acct})
         if region:
-            want(REGION, (region,), {"name": region, "region_code": region})
+            want(REGION, (region,), {"name": region, "region_code": region}, {})
         if acct and region:
-            want(ACCOUNT_REGION, (acct, region), {"name": f"{acct}/{region}", "account_id": acct, "region_code": region})
-            link("BELONGS_TO_ACCOUNT__aws_core", ACCOUNT_REGION, (acct, region), ACCOUNT, (acct,))
+            want(ACCOUNT_REGION, (acct, region), {"name": f"{acct}/{region}", "account_id": acct, "region_code": region}, owned)
             link("HOSTS_EC2_INSTANCE__aws_core", ACCOUNT_REGION, (acct, region), INSTANCE, iid)
         vpc = (o["vpc_id"],) if o["vpc_id"] else None
         if vpc:
-            want(VPC, vpc, {"name": o["vpc_id"], "vpc_id": o["vpc_id"]})
+            want(VPC, vpc, {"name": o["vpc_id"], "vpc_id": o["vpc_id"]}, regional)
         if o["subnet_id"]:
             subnet = (o["subnet_id"],)
-            # The instance's zone is its subnet's: an instance's primary interface is in the subnet it reports.
-            want(SUBNET, subnet, {"name": o["subnet_id"], "subnet_id": o["subnet_id"], "availability_zone": o["zone_name"]})
+            want(SUBNET, subnet, {"name": o["subnet_id"], "subnet_id": o["subnet_id"], "availability_zone": o["zone_name"]}, regional)
+            link("RESIDES_IN_SUBNET__aws_core", INSTANCE, iid, SUBNET, subnet)
             if vpc:
                 link("PARTITIONED_INTO_SUBNET__aws_core", VPC, vpc, SUBNET, subnet)
         for sg in o["security_groups"]:
-            want(SECURITY_GROUP, (sg,), {"name": o["group_names"].get(sg) or sg, "group_id": sg})
+            want(SECURITY_GROUP, (sg,), {"name": o["group_names"].get(sg) or sg, "group_id": sg}, regional)
             if vpc:
                 link("RESIDES_IN_VPC__aws_core", SECURITY_GROUP, (sg,), VPC, vpc)
+            if group_edges:
+                link(USES_SECURITY_GROUP, INSTANCE, iid, SECURITY_GROUP, (sg,))
 
     held: dict[str, set[tuple[str, ...]]] = {}
     for entity_type, keys in wanted.items():
@@ -190,13 +210,14 @@ def mint(hosts: Iterable[dict[str, Any]], grid: AwsView) -> Minted:
         held[entity_type] = found
     minted: dict[str, set[tuple[str, ...]]] = {t: set() for t in KEYS}
     for entity_type, keys in wanted.items():
-        dims = grid.default_dimensions(entity_type)
+        defaults = grid.default_dimensions(entity_type)
         for key, fields in sorted(keys.items()):
             if key in held[entity_type]:
                 out.counters[f"aws_{entity_type.split('__aws_')[1]}_held"] = out.counters.get(f"aws_{entity_type.split('__aws_')[1]}_held", 0) + 1
                 continue
             minted[entity_type].add(key)
-            out.nodes.append({"entity": {"ref": _ref(entity_type, key), "entity_type": entity_type, "name": str(fields.get("name") or "/".join(key))[:255], "dimensions": dict(dims)},
+            out.nodes.append({"entity": {"ref": _ref(entity_type, key), "entity_type": entity_type, "name": str(fields.get("name") or "/".join(key))[:255],
+                                         "dimensions": {**defaults, **dims[entity_type].get(key, {})}},
                               "node": fields})
             name = f"aws_{entity_type.split('__aws_')[1]}_created"
             out.counters[name] = out.counters.get(name, 0) + 1

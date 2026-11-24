@@ -145,6 +145,7 @@ class QualysCollector(CollectorBase):
             tags_not_read=got.tags.not_read if got.tags is not None else [],
             switched_off=got.switched_off,
             aws=credential.integrations["aws"],
+            networks=credential.networks,
             host_assets=got.host_assets.assets if got.host_assets is not None else None,
             host_assets_not_read=got.host_assets.not_read if got.host_assets is not None else [],
         )

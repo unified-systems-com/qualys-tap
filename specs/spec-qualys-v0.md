@@ -93,6 +93,7 @@ Eight consequences shape v0:
 | req-qualys-ignored-disabled | Acting On Ignored And Disabled | Backlog | What a consumer should make of `IS_IGNORED` and `IS_DISABLED`; v0 stores both flags and acts on neither |
 | req-qualys-json-api | JSON Detection API | Backlog | The `/vmrs/api/1.0` JSON host detection API, a limited release today, as a second read path behind the same vocabulary |
 | req-qualys-installed-software | [Installed Software](#installed-software) | In Development | Each EC2 host's software from the host asset search, as `INSTALLS_PACKAGE` from its shared computing_core host to each package, the ecosystem from the OS |
+| req-qualys-host-network | [Host Network](#host-network) | In Development | Each EC2 host's interface addresses and open ports on computing_core, on the networks the envelope declares (`Internet` for public addresses) |
 | req-qualys-shared-facts | Shared Facts | Backlog | Interfaces, addresses and ports written to computing_core once it can key them (computing-core-tap#32 and #77; form-3 keys, unified-systems-com/tap#1355). No plugin writes these yet: Tenable has the plan and declared edges but no collector (survey 2026-11-24) |
 | req-qualys-other-clouds | Azure And GCP Links | Backlog | The same exact-id link for hosts Qualys reports on Azure or GCP, once a provider plugin holds those instances |
 | req-qualys-aws | [AWS Integration](#aws-integration) | In Development | Opt-in (`integrations.aws`): mint the aws_core nodes and edges Qualys's metadata names, only where aws_core holds none; supersedes the Backlog row for creating absent EC2 instances (ruled 2026-11-23, Q38) |
@@ -761,6 +762,30 @@ The installs claim (`req-grid-reconcile-edge-authority`, outbound from the share
 | req-qualys-installed-software-2 | Held Hosts Kept, Unread Software Silent | Proposed | A shared host another plugin holds keeps every field and gains the edges; a run that read no software writes no shared host and no installs. | `TestOnTheGrid.test_a_host_another_plugin_holds_is_linked_and_never_rewritten`, `test_no_software_read_means_no_shared_host_and_no_installs`. |
 | req-qualys-installed-software-3 | No Complete Claim On A Shared Host | Proposed | The installs claim on the shared host is always `partial`, so a Qualys run never proposes retiring an install another scanner wrote, and every install of a host already on the grid is written once, after the packages it names, at any batch bound. | `test_the_installs_claim_is_never_complete_on_a_shared_host`, `TestAHeldHostAtAnyBound`. |
 | req-qualys-installed-software-4 | The Instance Contains Its Interfaces | Proposed | For an EC2 host whose interfaces the host asset search returned, each named interface becomes `computing_core__network_interface` keyed `(tap.computing.host, interface_name)`, created where absent with its MAC (an empty MAC is unobserved, `null`), with `CONTAINS_NETWORK_INTERFACE` from the shared host. An unnamed interface is not written, and an interface another plugin holds is linked and never rewritten. | `test_qualys_host_interfaces.py`. computing-core v0.11.1 (#105); qualys owns the interface key (George, 2026-11-24, Q45). |
+
+### Host Network
+----
+RID: `req-qualys-host-network`
+
+Status: `In Development`
+
+Where each machine is reachable, on the shared vocabulary, so a scanner's address and port meet every other source's (George, 2026-11-24, Q47a and Q47b).
+
+#### Implementation
+
+`tap_plugin/qualys/shared_host.py`, for the same shared hosts as `req-qualys-installed-software`.
+
+- **The network is declared, never guessed.** An address is keyed `(tap.computing.network_name, address)`, and 10.0.0.5 in two VPCs is two addresses. The envelope's optional `networks` names them, following tenable's `network_name` (`req-tenable-connection-10`): a required `default`, plus an optional `vpcs` map from EC2 VPC id to name. A public address is always on `Internet`. A private address takes its host's VPC name from the map (Qualys reports `vpcId` per EC2 host), falling back to the default. Without `networks` no address or port is written, and the run counts `networks_undeclared`: a guessed network would merge overlapping private addresses.
+- **Addresses.** Each address an interface reports becomes `computing_core__ip_address`, with key fields only, created where absent, never rewritten. `USES_IP_ADDRESS__computing_core` runs from the interface to it. IPv4-mapped IPv6 is written as IPv4. Loopback, wildcard and link-local addresses are host-scoped (`req-computing-core-ip-4`) and are not written.
+- **Open ports.** Qualys reports a host's open ports with no address of their own. Each `(transport, port)` with transport tcp, udp or sctp and a number from 1 to 65535 becomes `computing_core__port`, keyed `(network, host address, transport, port number)`. The host address is the one Qualys reports for the host (`IP`). The port is created where absent, with `AVAILABLE_AT__computing_core` to that address (computing-core `req-computing-core-ports-6`). The edge claims only that the port is reachable there, not which interface or program serves it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-qualys-host-network-1 | Addresses On Their Networks | Proposed | A public address is on `Internet`, a private one on its host's VPC name or the default. Each is created where absent and used by the interface that reports it; host-scoped addresses are not written. | `test_qualys_host_network.py::TestTheRules`, `TestOnTheGrid::test_addresses_on_their_networks_used_by_their_interface` |
+| req-qualys-host-network-2 | Open Ports At The Host's Address | Proposed | Each open port with a known transport and a real number is a port at the host's reported address, `AVAILABLE_AT` that address. | `::test_open_ports_are_available_at_the_hosts_address` |
+| req-qualys-host-network-3 | Held Facts Kept, No Guessed Network | Proposed | An address another plugin holds is linked and never rewritten. Without declared networks, no address or port is written and the run counts `networks_undeclared`; interfaces still are. | `::test_an_address_another_plugin_holds_is_linked_and_never_rewritten`, `::test_no_declared_network_writes_no_address_or_port` |
 
 ### Chunked Write
 ----

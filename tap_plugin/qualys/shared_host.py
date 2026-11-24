@@ -12,14 +12,17 @@ The host's identity is decided in :func:`host_key` alone: computing_core's ``(ta
 the host type an identity dimension on the envelope, never a payload field (form 3, unified-systems-com/tap#1355).
 """
 
+import ipaddress
 import re
 from collections.abc import Iterable
 from typing import Any, Protocol
 
-from tap_grid.natural_key import encode_key_part
 from tap_plugin.computing_core import key_dimensions
+from tap_plugin.computing_core.addresses import host_scoped_kind
 from tap_plugin.qualys import neutral
 from tap_plugin.qualys.parsers.package_table import _unambiguous, ecosystem_of
+
+from tap_grid.natural_key import encode_key_part
 
 HOST_TYPE = "computing_core__host"
 EC2_HOST_TYPE = key_dimensions.AWS_EC2
@@ -27,6 +30,13 @@ TRACKS_HOST = "TRACKS_HOST__qualys"
 INSTALLS_PACKAGE = "INSTALLS_PACKAGE__computing_core"
 INTERFACE_TYPE = "computing_core__network_interface"
 CONTAINS_INTERFACE = "CONTAINS_NETWORK_INTERFACE__computing_core"
+ADDRESS_TYPE = "computing_core__ip_address"
+PORT_TYPE = "computing_core__port"
+USES_ADDRESS = "USES_IP_ADDRESS__computing_core"
+AVAILABLE_AT = "AVAILABLE_AT__computing_core"
+INTERNET = "Internet"
+TRANSPORTS = ("tcp", "udp", "sctp")
+_VPC = re.compile(r"vpc-[0-9a-f]{8}(?:[0-9a-f]{9})?")
 _INSTANCE = re.compile(r"i-[0-9a-f]{8}(?:[0-9a-f]{9})?")
 
 
@@ -85,6 +95,52 @@ def interfaces_of(interfaces: list[dict[str, Any]] | None) -> dict[str, str | No
     return out
 
 
+def canonical_address(value: Any) -> str | None:
+    """An address as computing_core keys it, or None for one it would refuse or that is not an address.
+
+    IPv4-mapped IPv6 is written as IPv4, so one address is one node. Loopback, wildcard and link-local addresses
+    are host-scoped, never a shared ``ip_address`` (req-computing-core-ip-4), so they are not written here.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed.ipv4_mapped is not None:
+        parsed = parsed.ipv4_mapped
+    text = str(parsed)
+    return None if host_scoped_kind(text) is not None else text
+
+
+def network_of(address: str, vpc: str | None, networks: dict[str, Any]) -> str:
+    """The network an address is on (req-qualys-host-network): ``Internet`` for a public address, else the name the
+    envelope declares for the host's VPC, else its default."""
+    if ipaddress.ip_address(address).is_global:
+        return INTERNET
+    return (networks.get("vpcs") or {}).get(vpc or "") or networks["default"]
+
+
+def ports_of(open_ports: list[dict[str, Any]] | None) -> set[tuple[str, int]]:
+    """The (transport, port number) pairs a host asset reports open; an unknown transport or a bad number is skipped."""
+    out = set()
+    for item in open_ports or []:
+        transport, number = str(item.get("protocol") or "").strip().lower(), item.get("port")
+        try:
+            number = int(number)
+        except (TypeError, ValueError):
+            continue
+        if transport in TRANSPORTS and 0 < number < 65536:
+            out.add((transport, number))
+    return out
+
+
+def _vpc_of(host: dict[str, Any]) -> str | None:
+    meta = host.get("ec2_metadata") or {}
+    value = meta.get("vpcId") if isinstance(meta, dict) else None
+    return value if isinstance(value, str) and _VPC.fullmatch(value) else None
+
+
 def packages_of(software: list[dict[str, Any]] | None, os_name: Any) -> list[tuple[str, str, str]]:
     """The packages a host's software list names, keyed only where the ecosystem and the version are unambiguous."""
     ecosystem = ecosystem_of(os_name)
@@ -98,8 +154,10 @@ def packages_of(software: list[dict[str, Any]] | None, os_name: Any) -> list[tup
     return sorted(set(out))  # type: ignore[arg-type]
 
 
-def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], grid: HostView) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
-    """Nodes, edges, authority claims and counters for the shared hosts, their interfaces and their installed software."""
+def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], grid: HostView,
+          networks: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    """Nodes, edges, authority claims and counters for the shared hosts, their interfaces, addresses and open ports,
+    and their installed software."""
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     claims: list[dict[str, Any]] = []
@@ -109,6 +167,10 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
     wanted: dict[tuple[str, str], tuple[list[str], set[tuple[str, str, str]]]] = {}
     software_read: set[tuple[str, str]] = set()
     interfaces: dict[tuple[str, str], dict[str, str | None]] = {}
+    # Per shared host: each interface's addresses, and the open ports with the address they are reachable at.
+    bound: dict[tuple[str, str], set[tuple[str, str, str]]] = {}
+    exposed: dict[tuple[str, str], set[tuple[str, str, str, int]]] = {}
+    undeclared = 0
     for host in hosts:
         key = host_key(host)
         asset = assets.get(host.get("host_id") or "")
@@ -122,6 +184,23 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
         for name, mac in interfaces_of(asset.get("interfaces")).items():
             seen = interfaces.setdefault(key, {})
             seen[name] = seen.get(name) or mac
+        if asset.get("interfaces") is None and asset.get("open_ports") is None:
+            continue
+        if networks is None:
+            undeclared += 1  # no declared network: an address would land on a guessed one (req-qualys-host-network)
+            continue
+        vpc = _vpc_of(host)
+        for item in asset.get("interfaces") or []:
+            name, address = item.get("interface_name"), canonical_address(item.get("address"))
+            if isinstance(name, str) and name.strip() and address:
+                bound.setdefault(key, set()).add((name.strip(), network_of(address, vpc, networks), address))
+        address = canonical_address(host.get("ip"))
+        if address:
+            net = network_of(address, vpc, networks)
+            for transport, number in ports_of(asset.get("open_ports")):
+                exposed.setdefault(key, set()).add((net, address, transport, number))
+    if undeclared:
+        counters["networks_undeclared"] = undeclared
     if not wanted:
         return nodes, edges, claims, counters
     held_hosts = grid.held_keys(HOST_TYPE, wanted)
@@ -131,6 +210,41 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
     held_packages = grid.held_packages(all_packages)
     host_dims = grid.default_dimensions(HOST_TYPE)
     package_dims = grid.default_dimensions(neutral.PACKAGE_TYPE)
+    wanted_addresses = {(net, addr) for facts in bound.values() for _, net, addr in facts}
+    wanted_addresses |= {(net, addr) for facts in exposed.values() for net, addr, _, _ in facts}
+    held_addresses = (grid.held_keys(ADDRESS_TYPE, wanted_addresses) or set()) if wanted_addresses else set()
+    address_dims = grid.default_dimensions(ADDRESS_TYPE) if wanted_addresses else {}
+    address_end: dict[tuple[str, str], dict[str, Any]] = {}
+    for net, addr in sorted(wanted_addresses):
+        if (net, addr) in held_addresses:
+            address_end[(net, addr)] = {"entity_type": ADDRESS_TYPE, "key": {key_dimensions.NETWORK_NAME_ENTRY: net, "address": addr}}
+        else:
+            # The shared-fact rule: key fields only, created where absent, never rewritten.
+            nodes.append({"entity": {"ref": f"ip:{net}:{addr}", "entity_type": ADDRESS_TYPE, "name": addr,
+                                     "dimensions": {**address_dims, key_dimensions.NETWORK_NAME: net}},
+                          "node": {"address": addr}})
+            counters["addresses_created"] = counters.get("addresses_created", 0) + 1
+            address_end[(net, addr)] = {"ref": f"ip:{net}:{addr}"}
+    wanted_ports = {p for facts in exposed.values() for p in facts}
+    held_ports = (grid.held_keys(PORT_TYPE, wanted_ports) or set()) if wanted_ports else set()
+    port_dims = grid.default_dimensions(PORT_TYPE) if wanted_ports else {}
+    for port in sorted(wanted_ports):
+        net, addr, transport, number = port
+        ref = f"port:{net}:{addr}:{transport}:{number}"
+        if port in held_ports:
+            port_end = {"from_key": {"entity_type": PORT_TYPE, "key": {key_dimensions.NETWORK_NAME_ENTRY: net, "address": addr,
+                                                                      "transport": transport, "port_number": number}}}
+        else:
+            nodes.append({"entity": {"ref": ref, "entity_type": PORT_TYPE, "name": f"{addr}:{number}/{transport}",
+                                     "dimensions": {**port_dims, key_dimensions.NETWORK_NAME: net}},
+                          "node": {"address": addr, "transport": transport, "port_number": number}})
+            counters["ports_created"] = counters.get("ports_created", 0) + 1
+            port_end = {"from_ref": ref}
+        # Qualys reports a host's open ports with no address of their own: the port is reachable at the host's
+        # reported IP, which is all AVAILABLE_AT claims (req-computing-core-ports-6).
+        to = address_end[(net, addr)]
+        edges.append({"entity": {"ref": f"e-available-{ref}", "entity_type": "edge", "name": AVAILABLE_AT, "dimensions": {}},
+                      "edge": {**port_end, **({"to_ref": to["ref"]} if "ref" in to else {"to_key": to}), "edge_type": AVAILABLE_AT, "properties": {}}})
     wanted_interfaces = {(host_scope(key), name) for key, names in interfaces.items() for name in names}
     held_interfaces = grid.held_keys(INTERFACE_TYPE, wanted_interfaces) or set()
     interface_dims = grid.default_dimensions(INTERFACE_TYPE) if wanted_interfaces else {}
@@ -167,6 +281,13 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
                 end = {"to_ref": ref}
             edges.append({"entity": {"ref": f"e-contains-{key[1]}-{name}", "entity_type": "edge", "name": CONTAINS_INTERFACE, "dimensions": {}},
                           "edge": {**_host_end(key, minted, "from"), **end, "edge_type": CONTAINS_INTERFACE, "properties": {}}})
+            source = {"from_ref": ref} if "to_ref" in end else {"from_key": end["to_key"]}
+            for bound_name, net, addr in sorted(bound.get(key, set())):
+                if bound_name != name:
+                    continue
+                to = address_end[(net, addr)]
+                edges.append({"entity": {"ref": f"e-uses-{key[1]}-{name}-{net}-{addr}", "entity_type": "edge", "name": USES_ADDRESS, "dimensions": {}},
+                              "edge": {**source, **({"to_ref": to["ref"]} if "ref" in to else {"to_key": to}), "edge_type": USES_ADDRESS, "properties": {}}})
         if key not in software_read:
             continue
         # Always partial. A claim's scope is every live edge of its type at the anchor, whoever wrote it

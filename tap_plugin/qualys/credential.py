@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+from tap_plugin.qualys.identity import canonical_api_host, subscription_key
+
 from tap.runtime_secrets import RuntimeSecretError, SecretEnvelope, load_secret_envelope
 from tap.secret_naming import SECRET_EXAMPLE_SUFFIX, SECRET_SUFFIX
-
-from tap_plugin.qualys.identity import canonical_api_host, subscription_key
 
 SCOPE = "qualys"
 KIND = "qualys_api_credential"
@@ -54,6 +54,7 @@ class Credential:
     _scope: tuple[tuple[str, tuple[int, ...]], ...]
     _sources: tuple[tuple[str, bool], ...]
     _integrations: tuple[tuple[str, bool], ...]
+    _networks: tuple[str, tuple[tuple[str, str], ...]] | None
     _username: str = field(repr=False)
     _password: str = field(repr=False)
 
@@ -74,6 +75,14 @@ class Credential:
     def integrations(self) -> dict[str, bool]:
         """Each integration in ``INTEGRATIONS``, on or off (all off unless set), as a fresh copy each time."""
         return dict(self._integrations)
+
+    @property
+    def networks(self) -> dict[str, Any] | None:
+        """The declared networks (req-qualys-host-network), as a fresh copy each time; None when none is declared."""
+        if self._networks is None:
+            return None
+        default, vpcs = self._networks
+        return {"default": default, "vpcs": dict(vpcs)}
 
     @property
     def basic(self) -> tuple[str, str]:
@@ -129,6 +138,7 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
         _scope=tuple((k, tuple(sorted(v))) for k, v in sorted(scope.items())),
         _sources=sources,
         _integrations=tuple((name, bool((data.get("integrations") or {}).get(name, False))) for name in INTEGRATIONS),
+        _networks=(data["networks"]["default"], tuple(sorted((data["networks"].get("vpcs") or {}).items()))) if data.get("networks") else None,
         _username=data["username"],
         _password=data["password"],
     )

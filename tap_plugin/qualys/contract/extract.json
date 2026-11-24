@@ -36,6 +36,15 @@
           "required_children": [],
           "single_children": []
         },
+        "CLOUD_PROVIDER_TAGS": {
+          "attributes": {},
+          "content": "(CLOUD_TAG+)",
+          "declared": true,
+          "required_children": [
+            "CLOUD_TAG"
+          ],
+          "single_children": []
+        },
         "CLOUD_RESOURCE_ID": {
           "attributes": {},
           "content": "(#PCDATA)",
@@ -49,6 +58,21 @@
           "declared": true,
           "required_children": [],
           "single_children": []
+        },
+        "CLOUD_TAG": {
+          "attributes": {},
+          "content": "(NAME,VALUE,LAST_SUCCESS_DATE)",
+          "declared": true,
+          "required_children": [
+            "NAME",
+            "VALUE",
+            "LAST_SUCCESS_DATE"
+          ],
+          "single_children": [
+            "NAME",
+            "VALUE",
+            "LAST_SUCCESS_DATE"
+          ]
         },
         "CODE": {
           "attributes": {},
@@ -257,6 +281,20 @@
           "required_children": [],
           "single_children": []
         },
+        "LAST_ERROR": {
+          "attributes": {},
+          "content": "(#PCDATA)",
+          "declared": true,
+          "required_children": [],
+          "single_children": []
+        },
+        "LAST_ERROR_DATE": {
+          "attributes": {},
+          "content": "(#PCDATA)",
+          "declared": true,
+          "required_children": [],
+          "single_children": []
+        },
         "LAST_FIXED_DATETIME": {
           "attributes": {},
           "content": "(#PCDATA)",
@@ -293,6 +331,13 @@
           "single_children": []
         },
         "LAST_STATUS": {
+          "attributes": {},
+          "content": "(#PCDATA)",
+          "declared": true,
+          "required_children": [],
+          "single_children": []
+        },
+        "LAST_SUCCESS_DATE": {
           "attributes": {},
           "content": "(#PCDATA)",
           "declared": true,

@@ -64,7 +64,7 @@
     {
       "id": "cloud-provider-tags-shape",
       "question": "What shape is CLOUD_PROVIDER_TAGS, which the DTD names but does not declare?",
-      "assumption": "Unknown, so it is not read; a recording that shows a shape settles the entry, and the shape is then a spec change.",
+      "assumption": "The served DTD declares CLOUD_TAG (NAME, VALUE, LAST_SUCCESS_DATE); NAME and VALUE are read (req-qualys-aws). A recording that shows the element paths confirms it or contradicts it.",
       "settled_by": "The element paths (never the text) under every CLOUD_PROVIDER_TAGS on the detection page."
     }
   ]

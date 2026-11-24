@@ -142,7 +142,7 @@ class TestTheOnePost:
     def test_the_post_list_is_the_spec_row(self) -> None:
         from tap_plugin.qualys import client as client_module
 
-        assert set(client_module.POST_READS) == {TAG_SEARCH_PATH}
+        assert set(client_module.POST_READS) == {TAG_SEARCH_PATH, client_module.HOST_ASSET_SEARCH_PATH}
 
 
 class TestTagPage:
@@ -281,7 +281,8 @@ class TestSourceSwitches:
     def test_every_source_is_on_by_default(self) -> None:
         envelope = type("E", (), {"qualified": "qualys:acme", "scope": "qualys", "kind": "qualys_api_credential", "data": {
             "api_host": HOST, "subscription": "acme-prod", "username": "u", "password": "p"}})()
-        assert credential_from_envelope(envelope).sources == {"detections": True, "knowledgebase": True, "tags": True}
+        # Every source on, except host assets, which need Asset Management's Read Asset permission too.
+        assert credential_from_envelope(envelope).sources == {"detections": True, "knowledgebase": True, "tags": True, "host_assets": False}
 
     def test_every_source_off_is_refused(self) -> None:
         envelope = type("E", (), {"qualified": "qualys:acme", "scope": "qualys", "kind": "qualys_api_credential", "data": {

@@ -28,6 +28,7 @@ DOC = "latest/dynamic/instance-identity/document/"
 META = "latest/meta-data/"
 
 INSTANCE = "aws_core__aws_ec2_instance"
+INTERFACE = "aws_core__aws_ec2_network_interface"
 VPC = "aws_core__aws_vpc"
 SUBNET = "aws_core__aws_subnet"
 SECURITY_GROUP = "aws_core__aws_security_group"
@@ -37,6 +38,7 @@ ACCOUNT_REGION = "aws_core__aws_account_region"
 #: Every type this module may mint, with its natural-key fields.
 KEYS: dict[str, tuple[str, ...]] = {
     INSTANCE: ("instance_id",),
+    INTERFACE: ("ec2_network_interface_id",),
     VPC: ("vpc_id",),
     SUBNET: ("subnet_id",),
     SECURITY_GROUP: ("group_id",),
@@ -48,7 +50,7 @@ TYPES = frozenset(KEYS)
 
 _DIGITS12 = frozenset("0123456789")
 #: AWS's id shapes: a prefix and 8 or 17 hex digits. A value of any other shape is left out, never minted.
-_AWS_ID = re.compile(r"(i|sg|vpc|subnet)-[0-9a-f]{8}(?:[0-9a-f]{9})?")
+_AWS_ID = re.compile(r"(i|sg|vpc|subnet|eni)-[0-9a-f]{8}(?:[0-9a-f]{9})?")
 _REGION = re.compile(r"[a-z]{2}(?:-gov|-iso[a-z]*)?-[a-z]+-[0-9]{1,2}")
 
 
@@ -127,6 +129,7 @@ def observe(host: dict[str, Any]) -> dict[str, Any] | None:
     names = (_value(meta, "groupName") or "").split()
     tags = host.get("cloud_tags")
     return {
+        "host_id": host.get("host_id"),
         "instance_id": instance,
         "account_id": _account(_value(meta, DOC + "accountId")) or _account(_value(meta, "ownerId")),
         "region": region if region and _REGION.fullmatch(region) else None,
@@ -147,8 +150,13 @@ def observe(host: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def mint(hosts: Iterable[dict[str, Any]], grid: AwsView) -> Minted:
-    """Every aws_core node and edge the hosts justify that the grid lacks (req-qualys-aws)."""
+def mint(hosts: Iterable[dict[str, Any]], grid: AwsView, assets: dict[str, dict[str, Any]] | None = None) -> Minted:
+    """Every aws_core node and edge the hosts justify that the grid lacks (req-qualys-aws).
+
+    ``assets``, the host asset search's records by Qualys host id (req-qualys-host-assets), adds each host's network
+    interfaces whose ``interfaceId`` is an ENI id, ``ATTACHED_TO_INSTANCE`` the host's instance.
+    """
+    assets = assets or {}
     out = Minted()
     seen = [o for h in hosts if (o := observe(h)) is not None]
     if not seen:
@@ -194,6 +202,11 @@ def mint(hosts: Iterable[dict[str, Any]], grid: AwsView) -> Minted:
             link("RESIDES_IN_SUBNET__aws_core", INSTANCE, iid, SUBNET, subnet)
             if vpc:
                 link("PARTITIONED_INTO_SUBNET__aws_core", VPC, vpc, SUBNET, subnet)
+        for iface in (assets.get(o["host_id"] or "") or {}).get("interfaces") or []:
+            eni = iface.get("interface_id")
+            if isinstance(eni, str) and eni.startswith("eni-") and _AWS_ID.fullmatch(eni):
+                want(INTERFACE, (eni,), {"name": eni, "ec2_network_interface_id": eni}, regional)
+                link("ATTACHED_TO_INSTANCE__aws_core", INTERFACE, (eni,), INSTANCE, iid)
         for sg in o["security_groups"]:
             want(SECURITY_GROUP, (sg,), {"name": o["group_names"].get(sg) or sg, "group_id": sg}, regional)
             if vpc:

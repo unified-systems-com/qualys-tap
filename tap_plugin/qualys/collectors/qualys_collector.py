@@ -145,7 +145,11 @@ class QualysCollector(CollectorBase):
             tags_not_read=got.tags.not_read if got.tags is not None else [],
             switched_off=got.switched_off,
             aws=credential.integrations["aws"],
+            host_assets=got.host_assets.assets if got.host_assets is not None else None,
+            host_assets_not_read=got.host_assets.not_read if got.host_assets is not None else [],
         )
+        if got.host_assets is not None:
+            run.extra_warnings = run.extra_warnings + got.host_assets.warnings
         if got.tags is not None:
             run.extra_warnings = run.extra_warnings + got.tags.warnings
         with hold_subscription(credential.key):

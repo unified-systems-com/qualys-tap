@@ -378,3 +378,58 @@ def parse_tag_page(body: bytes) -> TagPage:
         last_id=_text(root, "lastId"),
         count=_text(root, "count"),
     )
+
+
+@dataclass
+class HostAssetPage:
+    """One page of the host asset search (req-qualys-host-assets): each asset's inventory, and the rest's state."""
+
+    assets: list[dict[str, Any]]
+    has_more: bool | None
+    last_id: str | None
+
+
+#: Each inventory list: its element, its item element, and the fields read from each item as returned.
+_ASSET_LISTS = {
+    "interfaces": ("networkInterface", "HostAssetInterface",
+                   {"interfaceId": "interface_id", "interfaceName": "interface_name", "macAddress": "mac_address", "address": "address",
+                    "gatewayAddress": "gateway_address", "hostname": "hostname", "type": "type"}),
+    "open_ports": ("openPort", "HostAssetOpenPort",
+                   {"port": "port", "protocol": "protocol", "serviceId": "service_id", "serviceName": "service_name"}),
+    "software": ("software", "HostAssetSoftware", {"name": "name", "version": "version"}),
+}
+
+
+def _asset(node: Element) -> dict[str, Any]:
+    record: dict[str, Any] = {"host_asset_id": _text(node, "id"), "qweb_host_id": _text(node, "qwebHostId")}
+    for name, (element, item, fields) in _ASSET_LISTS.items():
+        found = node.find(element)
+        if found is None:
+            record[name] = None  # not returned: unobserved, never "none"
+            continue
+        listed = found.find("list")
+        record[name] = [] if listed is None else [{out: _text(entry, src, exact=True) for src, out in fields.items()} for entry in listed if entry.tag == item]
+    return record
+
+
+def parse_host_asset_page(body: bytes) -> HostAssetPage:
+    """A host-asset search page, refused unless Qualys answered SUCCESS with a ``data`` list (or a count of 0)."""
+    if len(body) > MAX_PAGE_BYTES:
+        raise PageRefused(f"page larger than {MAX_PAGE_BYTES} bytes")
+    if not body.strip():
+        raise EmptyBody("the page is empty")
+    root = _bounded_parse(body)
+    if root.tag != "ServiceResponse":
+        raise PageRefused(f"root element is {root.tag}, expected ServiceResponse")
+    code = _text(root, "responseCode")
+    if code != "SUCCESS":
+        shown = code if code is not None and _RESPONSE_CODE.fullmatch(code) else "an unreadable code"
+        raise PageRefused(f"the host asset search answered {shown}, not SUCCESS")
+    data = root.find("data")
+    if data is None and _text(root, "count") != "0":
+        raise PageRefused("the host asset search answered SUCCESS with no data list")
+    return HostAssetPage(
+        assets=[_asset(a) for a in (data if data is not None else []) if a.tag == "HostAsset"],
+        has_more={"true": True, "false": False}.get(_text(root, "hasMoreRecords") or ""),
+        last_id=_text(root, "lastId"),
+    )

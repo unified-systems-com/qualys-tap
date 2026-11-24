@@ -26,10 +26,11 @@ not retried; the client drops the session that attempt holds and builds a new on
 connection pool with a thread that may still be running. Until that attempt has finished, every further read is
 refused unsent, so calls stay serial even though the lock is no longer held by the abandoned thread.
 
-One read is a POST, because Qualys offers it in no GET form: the tag search of the Asset Management and
-Tagging API, which lists the subscription's tags (req-qualys-transport-8, req-qualys-tags; ruled 2026-11-23).
-Its body is built here from a fixed template whose only variables are digits, and ``send`` refuses any POST
-whose path, query or body is not exactly that, so the POST can carry no criteria and no write.
+Two reads are POSTs, because Qualys offers them in no GET form, both in the Asset Management and Tagging API
+(req-qualys-transport-8; ruled 2026-11-23): the tag search, which lists the subscription's tags (req-qualys-tags),
+and the host asset search, which reads the inventory of hosts the detection read saw (req-qualys-host-assets).
+Each body is built here from a fixed template whose only variables are digits, and ``send`` refuses any POST
+whose path, query or body is not exactly that, so a POST can carry no other criteria and no write.
 
 Two more reads are on the list for the observation command (req-qualys-observe): the two output DTDs, each a
 GET with no parameters at all. An anonymous client, which holds no credential, may send only those two, so
@@ -50,7 +51,6 @@ from urllib.parse import SplitResult, parse_qsl, urlsplit
 
 import requests
 from requests.adapters import HTTPAdapter
-
 from tap_plugin.qualys.identity import canonical_api_host
 from tap_plugin.qualys.parse import MAX_PAGE_BYTES
 
@@ -62,6 +62,11 @@ KNOWLEDGEBASE_DTD_PATH = "/api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_li
 TAG_SEARCH_PATH = "/qps/rest/2.0/search/am/tag"
 #: Tags per tag-search page: Qualys's documented default, the one size known to be served.
 TAG_PAGE_SIZE = 100
+#: The host asset search of the Asset Management API: the second POST read (req-qualys-host-assets).
+HOST_ASSET_SEARCH_PATH = "/qps/rest/2.0/search/am/hostasset"
+#: Host assets per page (Qualys's documented default), and host ids per request's ``qwebHostId IN`` filter.
+HOST_ASSET_PAGE_SIZE = 100
+HOST_ASSET_IDS_PER_REQUEST = 100
 #: Reads that take no parameters at all; the only ones an anonymous client may send.
 PARAMETERLESS = frozenset({DETECTION_DTD_PATH, KNOWLEDGEBASE_DTD_PATH})
 USER_AGENT = "qualys-tap (read-only collector)"
@@ -70,9 +75,14 @@ _DIGITS = re.compile(r"[0-9]+")
 _ID_LIST = re.compile(r"[0-9]+(,[0-9]+)*")
 _ISO_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _TAG_NAMES = re.compile(r"[^\x00-\x1f]{1,4096}")
-#: The only body a POST may carry: preferences for paging, and nothing that filters, sorts or writes.
+#: The only body a tag-search POST may carry: preferences for paging, and nothing that filters, sorts or writes.
 _TAG_SEARCH_BODY = re.compile(
     rb"<ServiceRequest><preferences>(<startFromId>[0-9]{1,19}</startFromId>)?<limitResults>[0-9]{1,4}</limitResults></preferences></ServiceRequest>"
+)
+#: The only body a host-asset POST may carry: paging, and one filter naming host ids, digits only, at most 100.
+_HOST_ASSET_SEARCH_BODY = re.compile(
+    rb"<ServiceRequest><preferences>(<startFromId>[0-9]{1,19}</startFromId>)?<limitResults>[0-9]{1,4}</limitResults></preferences>"
+    rb'<filters><Criteria field="qwebHostId" operator="IN">[0-9]{1,19}(,[0-9]{1,19}){0,99}</Criteria></filters></ServiceRequest>'
 )
 
 
@@ -120,7 +130,7 @@ ALLOWLIST: dict[str, dict[str, Callable[[str], bool]]] = {
 
 #: The POST reads: a path and the one body shape it may carry. A change here is a spec change
 #: (req-qualys-transport-8): a POST is admitted only for a read Qualys offers in no GET form.
-POST_READS: dict[str, re.Pattern[bytes]] = {TAG_SEARCH_PATH: _TAG_SEARCH_BODY}
+POST_READS: dict[str, re.Pattern[bytes]] = {TAG_SEARCH_PATH: _TAG_SEARCH_BODY, HOST_ASSET_SEARCH_PATH: _HOST_ASSET_SEARCH_BODY}
 
 
 def tag_search_body(start_from_id: str | None, limit: int = TAG_PAGE_SIZE) -> bytes:
@@ -178,6 +188,17 @@ def _check_origin(url: str, root: str) -> SplitResult:
     if origin != root:
         raise TransportRefused("a URL outside the configured API host is refused")
     return parts
+
+
+def host_asset_search_body(host_ids: list[str], start_from_id: str | None, limit: int = HOST_ASSET_PAGE_SIZE) -> bytes:
+    """The host-asset search body for one page of these hosts (by Qualys host id), from ``start_from_id`` or the first."""
+    if not host_ids or len(host_ids) > HOST_ASSET_IDS_PER_REQUEST or not all(_DIGITS.fullmatch(i) for i in host_ids):
+        raise TransportRefused(f"a host-asset search names 1 to {HOST_ASSET_IDS_PER_REQUEST} host ids, digits only")
+    if start_from_id is not None and not _DIGITS.fullmatch(start_from_id):
+        raise TransportRefused("a host-asset start id is digits only")
+    start = f"<startFromId>{start_from_id}</startFromId>" if start_from_id is not None else ""
+    return (f"<ServiceRequest><preferences>{start}<limitResults>{int(limit)}</limitResults></preferences>"
+            f'<filters><Criteria field="qwebHostId" operator="IN">{",".join(host_ids)}</Criteria></filters></ServiceRequest>').encode()
 
 
 def check_post(url: str, body: Any, root: str) -> str:
@@ -360,6 +381,15 @@ class ReadOnlyClient:
     def search_tags(self, start_from_id: str | None, *, bound: Bound | None = None, remaining: Callable[[], float] | None = None) -> Response:
         """One page of the subscription's tags, by the one POST read; the same waits and bounds as ``get``."""
         url, body = f"{self._root}{TAG_SEARCH_PATH}", tag_search_body(start_from_id)
+        check_post(url, body, self._root)
+        with self._lock:
+            return self._get(url, bound, remaining, body)
+
+    def search_host_assets(
+        self, host_ids: list[str], start_from_id: str | None, *, bound: Bound | None = None, remaining: Callable[[], float] | None = None
+    ) -> Response:
+        """One page of these hosts' asset records, by the second POST read; the same waits and bounds as ``get``."""
+        url, body = f"{self._root}{HOST_ASSET_SEARCH_PATH}", host_asset_search_body(host_ids, start_from_id)
         check_post(url, body, self._root)
         with self._lock:
             return self._get(url, bound, remaining, body)

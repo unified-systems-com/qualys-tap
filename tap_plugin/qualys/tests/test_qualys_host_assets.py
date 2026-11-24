@@ -165,3 +165,20 @@ class TestTheWalk:
         got = live.read_host_assets(client, ["1"], bounded=lambda attempt, what: attempt(), time_left=lambda: 3600.0)
         assert not got.complete and got.warnings[-1]["code"] == "TRUNCATED"
 
+    def test_the_run_ceiling_lists_every_unfinished_group(self) -> None:
+        client, adapter = make()
+        got = live.read_host_assets(client, [str(i) for i in range(1, 151)], bounded=lambda attempt, what: attempt(), time_left=lambda: 0.0)
+        assert not got.complete and adapter.seen == []
+        assert [n["scope"] for n in got.not_read] == ["host asset group 1", "host asset group 2"]
+
+
+@pytest.mark.django_db
+class TestWithoutDetections:
+    def test_host_assets_without_detections_is_not_read_never_empty(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
+        secrets(sources={"host_assets": True, "detections": False})
+        router = AssetRouter()
+        _collector(monkeypatch, router).run()
+        assert HOST_ASSET_SEARCH_PATH not in [urlsplit(r.url).path for r in router.seen]
+        run = QualysScanRun.objects.get(subscription_key=KEY)
+        assert any(s["scope"] == "host_assets" and "detections are switched off" in s["reason"] for s in run.scopes_not_read)
+

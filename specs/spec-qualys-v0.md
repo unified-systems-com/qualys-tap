@@ -718,7 +718,7 @@ With `sources.host_assets` on, a live run ends its detection and knowledge-base 
 
 Every value is as returned. A list Qualys did not return is null; an empty one is `[]`.
 
-A host node is written whole, so a host this run did not read an asset record for keeps the inventory the grid holds: not read is never "none". A group not read is listed on the run (`host asset group <n> page <m>`, `not read: <type>`) and never touches the detection read. A walk that cannot prove its end warns `TRUNCATED`.
+A host node is written whole, so a host this run did not read an asset record for keeps the inventory the grid holds: not read is never "none". A group not read is listed on the run (`host asset group <n> page <m>`, `not read: <type>`), and so is every group the run's ceiling stopped. Neither touches the detection read. A walk that cannot prove its end, or stops at the page ceiling, warns `TRUNCATED` and is incomplete. With detections switched off there are no hosts to ask for, so the source is listed as not read for that reason, never read as empty.
 
 With the AWS integration on (`req-qualys-aws`), each interface whose `interfaceId` is an ENI id of AWS's shape is minted as `aws_core__aws_ec2_network_interface`, `ATTACHED_TO_INSTANCE__aws_core` its host's instance, under the same create-if-absent rule.
 

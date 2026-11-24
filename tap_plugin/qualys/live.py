@@ -298,6 +298,8 @@ def read_host_assets(client: ReadOnlyClient, host_ids: list[str], *, bounded: Bo
         for page_number in range(1, MAX_TAG_PAGES + 1):
             if time_left() <= 0:
                 got.warnings.append({"code": "TRUNCATED", "detail": f"the host asset search stopped at the run's ceiling in group {number}"})
+                # Every group not finished is listed, never only warned about (PR #84 review).
+                got.not_read.extend({"scope": f"host asset group {n}", "reason": "not read: the run's ceiling passed"} for n in range(number, len(groups) + 1))
                 return got
             try:
                 reply = client.search_host_assets(group, start, bound=functools.partial(_bound_attempt, bounded, f"host-assets-{number}-{page_number}"), remaining=time_left)
@@ -446,7 +448,11 @@ def read(
         else:
             result.knowledgebase_complete = False
 
-    if on["host_assets"]:
+    if on["host_assets"] and not on["detections"]:
+        # The search asks for the hosts the detection read saw; with that read off there are none to ask for, which is
+        # not "none have inventory" (PR #84 review).
+        result.host_assets = HostAssetRead(not_read=[{"scope": "host_assets", "reason": "not read: it asks for the detection read's hosts, and detections are switched off"}])
+    elif on["host_assets"]:
         hosts = sorted({h["host_id"] for page in result.pages for h in page.hosts if isinstance(h.get("host_id"), str) and h["host_id"].isdigit()}, key=int)
         result.host_assets = read_host_assets(client, hosts, bounded=bounded, time_left=time_left) if hosts else HostAssetRead(complete=True)
         result.requests += result.host_assets.pages

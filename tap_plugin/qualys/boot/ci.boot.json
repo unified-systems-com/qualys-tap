@@ -39,8 +39,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/qualys-tap",
-          "rev": "main",
-          "commit": "644c339698b1be9a71f6971b503e66b2f22a1d64"
+          "rev": "v0.10.0",
+          "commit": "97d91fc3ea31e387b5815a013d55a71057f21dcd"
         }
       }
     ]

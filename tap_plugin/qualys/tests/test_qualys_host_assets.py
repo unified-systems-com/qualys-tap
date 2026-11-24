@@ -156,3 +156,12 @@ class TestTheWalk:
         client, adapter = make((200, b"<ServiceResponse><responseCode>SUCCESS</responseCode><count>0</count><hasMoreRecords>false</hasMoreRecords></ServiceResponse>", {}))
         got = live.read_host_assets(client, [str(i) for i in range(1, 251)], bounded=lambda attempt, what: attempt(), time_left=lambda: 3600.0)
         assert got.complete and len(adapter.seen) == 3 and adapter.seen[2].body.count(b",") == 49
+
+    def test_a_walk_stopped_at_the_page_ceiling_is_never_complete(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(live, "MAX_TAG_PAGES", 2)
+        pages = [(200, f"<ServiceResponse><responseCode>SUCCESS</responseCode><count>1</count><hasMoreRecords>true</hasMoreRecords><lastId>{n}</lastId>"
+                        f"<data><HostAsset><id>{n}</id><qwebHostId>1</qwebHostId></HostAsset></data></ServiceResponse>".encode(), {}) for n in (10, 20)]
+        client, _ = make(*pages)
+        got = live.read_host_assets(client, ["1"], bounded=lambda attempt, what: attempt(), time_left=lambda: 3600.0)
+        assert not got.complete and got.warnings[-1]["code"] == "TRUNCATED"
+

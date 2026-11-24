@@ -319,6 +319,10 @@ def read_host_assets(client: ReadOnlyClient, host_ids: list[str], *, bounded: Bo
                 whole = False
                 break
             start = str(last)
+        else:
+            # The page ceiling stopped a group Qualys still said had more: never a complete read (PR #84 review).
+            got.warnings.append({"code": "TRUNCATED", "detail": f"the host asset search stopped at {MAX_TAG_PAGES} pages in group {number}"})
+            whole = False
     got.complete = whole
     return got
 

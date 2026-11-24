@@ -37,6 +37,7 @@ class QualysHost(BaseModel):
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {"nodes": [{"type": "aws_core__aws_ec2_instance"}], "edges": [{"type": "TRACKS_EC2_INSTANCE__qualys"}]},
+        {"nodes": [{"type": "computing_core__host"}], "edges": [{"type": "TRACKS_HOST__qualys"}]},
         {"nodes": [{"type": "qualys__qualys_scan_run"}], "edges": [{"type": "LAST_SEEN_IN_RUN__qualys"}]},
     ]
     INBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [

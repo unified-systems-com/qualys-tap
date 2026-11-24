@@ -38,6 +38,7 @@ TRACKS_EC2_INSTANCE__qualys = "edges/TRACKS_EC2_INSTANCE__qualys.edge.json"
 FOUND_IN_PACKAGE__qualys = "edges/FOUND_IN_PACKAGE__qualys.edge.json"
 DETAILS_COMPLIANCE_FINDING__qualys = "edges/DETAILS_COMPLIANCE_FINDING__qualys.edge.json"
 TAG_OF_SUBSCRIPTION__qualys = "edges/TAG_OF_SUBSCRIPTION__qualys.edge.json"
+TRACKS_HOST__qualys = "edges/TRACKS_HOST__qualys.edge.json"
 LISTS_CHILD_TAG__qualys = "edges/LISTS_CHILD_TAG__qualys.edge.json"
 
 [grift]

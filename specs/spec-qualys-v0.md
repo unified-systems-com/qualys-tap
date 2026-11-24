@@ -92,8 +92,8 @@ Eight consequences shape v0:
 | req-qualys-scan-list | Scan List | Backlog | The scans Qualys ran, as nodes a detection's last scan can point at |
 | req-qualys-ignored-disabled | Acting On Ignored And Disabled | Backlog | What a consumer should make of `IS_IGNORED` and `IS_DISABLED`; v0 stores both flags and acts on neither |
 | req-qualys-json-api | JSON Detection API | Backlog | The `/vmrs/api/1.0` JSON host detection API, a limited release today, as a second read path behind the same vocabulary |
-| req-qualys-software-inventory | Software Inventory | Backlog | Installed software from Qualys's asset inventory (CSAM / Global AssetView), a separate API and entitlement |
-| req-qualys-shared-facts | Shared Facts | Backlog | Addresses, DNS names and interfaces written to or linked in `computing_core`, as Tenable does |
+| req-qualys-installed-software | [Installed Software](#installed-software) | In Development | Each EC2 host's software from the host asset search, as `INSTALLS_PACKAGE` from its shared computing_core host to each package, the ecosystem from the OS |
+| req-qualys-shared-facts | Shared Facts | Backlog | Interfaces, addresses and ports written to computing_core once it can key them (computing-core-tap#32 and #77; form-3 keys, unified-systems-com/tap#1355). No plugin writes these yet: Tenable has the plan and declared edges but no collector (survey 2026-11-24) |
 | req-qualys-other-clouds | Azure And GCP Links | Backlog | The same exact-id link for hosts Qualys reports on Azure or GCP, once a provider plugin holds those instances |
 | req-qualys-aws | [AWS Integration](#aws-integration) | In Development | Opt-in (`integrations.aws`): mint the aws_core nodes and edges Qualys's metadata names, only where aws_core holds none; supersedes the Backlog row for creating absent EC2 instances (ruled 2026-11-23, Q38) |
 | req-qualys-neutral-scanner | Scanner And Run In The Neutral Shape | Backlog | The subscription and runs also written as `compliance_core`'s scanner and scan-run types |
@@ -732,6 +732,31 @@ Unverified until a field read: that `qwebHostId` equals the detection read's hos
 | req-qualys-host-assets-2 | Not Read Keeps What Was Held | Proposed | With the source off, or a group not read, a host keeps the inventory an earlier read gave it; the run lists the source as switched off or the group as not read; the detection read is untouched. | `TestOnTheGrid.test_a_run_that_reads_none_keeps_what_was_held`, `test_a_refused_search_is_listed_and_keeps_the_detection_read`. |
 | req-qualys-host-assets-3 | ENIs With The AWS Integration | Proposed | With both on, an interface with an ENI id is minted as an aws_core network interface attached to its instance. | `TestOnTheGrid.test_with_the_aws_integration_an_eni_is_minted_and_attached`. |
 
+### Installed Software
+----
+RID: `req-qualys-installed-software`
+
+Status: `In Development`
+
+What is installed on each machine, on the shared vocabulary every scanner uses, so a vulnerability can be traced to the package on the host whoever reported it (George, 2026-11-24, Q42a and Q42d).
+
+#### Implementation
+
+`tap_plugin/qualys/shared_host.py`. For a host whose software the host asset search returned (`req-qualys-host-assets`), and whose identity an issuer vouches for, a run writes:
+
+- **The shared host.** `computing_core__host`, keyed as computing_core keys it, `(realm, stable_id)`. For an EC2 instance that is `("aws-ec2", instance id)`. It is created only where the grid holds none, with its key fields alone and no dimension of this plugin's own (the shared-fact rule); a host another plugin holds is never rewritten. A Qualys host with no cloud instance id has no realm Qualys can vouch for, so no shared host is written for it. Host identity is decided in `host_key()` alone, so when form-3 keys land (unified-systems-com/tap#1355) and the realm becomes a dimension, only that function changes.
+- **`TRACKS_HOST__qualys`**, from the Qualys host to the shared host, beside `TRACKS_EC2_INSTANCE__qualys` (the aws_core record).
+- **`INSTALLS_PACKAGE__computing_core`**, from the shared host to each package the software list names, with an absent package created with its key fields. The ecosystem comes from the host's OS by the package-table parser's rule: Debian and Ubuntu `deb`, RPM distributions `rpm`. An OS it cannot place writes no package, and neither does an ambiguous version (a deb epoch, an rpm architecture suffix). None is guessed.
+
+Each host's installs are claimed whole (`req-grid-reconcile-edge-authority`, outbound from the host) when its software list came back and its OS was placed; otherwise the claim says partial and proposes nothing. A host whose software was not read this run gets no shared host, edge or claim.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-qualys-installed-software-1 | The Instance Installs Its Packages | Proposed | An EC2 host whose software was read becomes `computing_core__host ("aws-ec2", instance id)` with key fields only, `TRACKS_HOST__qualys` from the Qualys host, and `INSTALLS_PACKAGE` to each package whose ecosystem and version are unambiguous; a host with no issuer's id gets none. | `test_qualys_installed_software.py::TestHostKey`, `TestOnTheGrid`. |
+| req-qualys-installed-software-2 | Held Hosts Kept, Unread Software Silent | Proposed | A shared host another plugin holds keeps every field and gains the edges; a run that read no software writes no shared host and no installs. | `TestOnTheGrid.test_a_host_another_plugin_holds_is_linked_and_never_rewritten`, `test_no_software_read_means_no_shared_host_and_no_installs`. |
+
 ### Chunked Write
 ----
 RID: `req-qualys-chunked-write`
@@ -747,6 +772,7 @@ How a run reaches the grid. Core takes one advisory lock for every natural key o
 1. **Opening:** the run with `finished_at` null, naming its subscription by key. The subscription itself is written here only when the grid does not hold it yet (with no watermark, last complete read or standing scope), so an opening never writes back a held watermark that could undo a newer seal.
 2. **Shared records:** vulnerability records and packages, then the QIDs, because later batches name them by key.
 3. **Body:** every other node, in groups joined by batch-local refs. A ref means something only inside its batch, so a group is never split: a host, its detections, its neutral findings and their edges land together, and so do a tag and its children. Groups are packed into batches of at most `CHUNK_KEYS` (2,000) nodes plus edges, about one lock each. A single group bigger than that is written alone, over the bound. An edge that names the subscription by ref names it by key instead.
+3a. An edge whose ends are both named by key, with no batch-local ref, rides in a body batch of its own after the shared records, never in the opening.
 4. **Seal:** the subscription with its new watermark and last complete read, every withdrawn host (and tag) with any edge naming it by ref, and the finished run.
 
 Each authority claim rides with the batch that holds its anchor, whose edges are the claim's asserted set. A claim whose anchor no batch holds is sent partial, so it proposes nothing.

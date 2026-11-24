@@ -25,6 +25,8 @@ from tap_plugin.qualys.identity import canonical_api_host, subscription_key
 SCOPE = "qualys"
 KIND = "qualys_api_credential"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "qualys_api_credential.schema.json"
+#: The kinds of Qualys data a run can read, each on unless the envelope switches it off (req-qualys-sources).
+SOURCES = ("detections", "knowledgebase", "tags")
 
 
 class CredentialError(Exception):
@@ -46,6 +48,7 @@ class Credential:
     key: str
     ca_bundle: str | None
     _scope: tuple[tuple[str, tuple[int, ...]], ...]
+    _sources: tuple[tuple[str, bool], ...]
     _username: str = field(repr=False)
     _password: str = field(repr=False)
 
@@ -56,6 +59,11 @@ class Credential:
     def standing_scope(self) -> dict[str, list[int]]:
         """The validated standing scope, as a fresh copy each time, so no caller can change what was validated."""
         return {kind: list(ids) for kind, ids in self._scope}
+
+    @property
+    def sources(self) -> dict[str, bool]:
+        """Each source in ``SOURCES``, on or off, as a fresh copy each time."""
+        return dict(self._sources)
 
     @property
     def basic(self) -> tuple[str, str]:
@@ -98,6 +106,10 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
         except UnicodeEncodeError:
             raise CredentialError(qualified, f"{name} has characters HTTP Basic auth cannot carry (Latin-1 only)") from None
     scope = data.get("scope") or {}
+    switches = data.get("sources") or {}
+    sources = tuple((name, switches.get(name, True)) for name in SOURCES)
+    if not any(on for _, on in sources):
+        raise CredentialError(qualified, "every source is switched off, so there is nothing to read")
     return Credential(
         qualified=qualified,
         api_host=host,
@@ -105,6 +117,7 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
         key=subscription_key(host, data["subscription"]),
         ca_bundle=data.get("ca_bundle"),
         _scope=tuple((k, tuple(sorted(v))) for k, v in sorted(scope.items())),
+        _sources=sources,
         _username=data["username"],
         _password=data["password"],
     )

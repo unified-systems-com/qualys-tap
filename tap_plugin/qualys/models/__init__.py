@@ -5,6 +5,7 @@ from .host import QualysHost
 from .qid import QualysQid
 from .scan_run import QualysScanRun
 from .subscription import QualysSubscription
+from .tag import QualysTag
 
 __all__ = [
     "QualysDetection",
@@ -12,4 +13,5 @@ __all__ = [
     "QualysQid",
     "QualysScanRun",
     "QualysSubscription",
+    "QualysTag",
 ]

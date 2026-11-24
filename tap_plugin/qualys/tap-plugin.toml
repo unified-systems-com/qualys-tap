@@ -3,7 +3,7 @@ plugin_version = "0.6.0" # x-release-please-version
 requires_tap = ">=0.4.8"
 slug = "qualys"
 name = "Qualys TAP"
-description = "Qualys VMDR host detections, from Cloud Agents and scanner appliances, and the QID knowledge base behind them, read-only and held on the grid as Qualys returns them, linked to the AWS EC2 instances they concern."
+description = "Qualys VMDR host detections, from Cloud Agents and scanner appliances, the QID knowledge base behind them and the subscription's asset tags, read-only and held on the grid as Qualys returns them, linked to the AWS EC2 instances they concern."
 
 # Tier-1 load order (req-tap-plugin-arch-dependencies). The qualys edges name computing_core's package,
 # compliance_core's vulnerability and finding, and aws_core's EC2 instance: vocabulary dependencies
@@ -26,6 +26,7 @@ qualys__qualys_scan_run = "tap_plugin.qualys.models.scan_run.QualysScanRun"
 qualys__qualys_host = "tap_plugin.qualys.models.host.QualysHost"
 qualys__qualys_detection = "tap_plugin.qualys.models.detection.QualysDetection"
 qualys__qualys_qid = "tap_plugin.qualys.models.qid.QualysQid"
+qualys__qualys_tag = "tap_plugin.qualys.models.tag.QualysTag"
 
 [edges]
 RUN_OF_SUBSCRIPTION__qualys = "edges/RUN_OF_SUBSCRIPTION__qualys.edge.json"
@@ -36,6 +37,8 @@ ABOUT_VULNERABILITY__qualys = "edges/ABOUT_VULNERABILITY__qualys.edge.json"
 TRACKS_EC2_INSTANCE__qualys = "edges/TRACKS_EC2_INSTANCE__qualys.edge.json"
 FOUND_IN_PACKAGE__qualys = "edges/FOUND_IN_PACKAGE__qualys.edge.json"
 DETAILS_COMPLIANCE_FINDING__qualys = "edges/DETAILS_COMPLIANCE_FINDING__qualys.edge.json"
+TAG_OF_SUBSCRIPTION__qualys = "edges/TAG_OF_SUBSCRIPTION__qualys.edge.json"
+LISTS_CHILD_TAG__qualys = "edges/LISTS_CHILD_TAG__qualys.edge.json"
 
 [grift]
 # Declares qualys.area, the key qualys stamps on its own types: dimensions are declared, never minted,

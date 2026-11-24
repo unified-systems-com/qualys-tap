@@ -13,6 +13,7 @@ which is kept exactly (req-qualys-detection-4). Nothing is converted, scaled or 
 
 import io
 import json
+import re
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -277,4 +278,72 @@ def parse_knowledgebase_page(body: bytes) -> KnowledgeBasePage:
         vulns=[_vuln(v) for v in response.findall("VULN_LIST/VULN")],
         next_url=warning["url"] if warning and warning["url"] else None,
         warning=warning,
+    )
+
+
+@dataclass
+class TagPage:
+    """One page of the tag search (req-qualys-tags): the tags, and what Qualys said about the rest.
+
+    ``has_more`` is None when the page did not say, which the walk treats as not knowing it reached the end.
+    """
+
+    tags: list[dict[str, Any]]
+    has_more: bool | None
+    last_id: str | None
+    count: str | None
+
+
+#: The Tag fields read, by Qualys's element name, kept as returned under the model's field name.
+_TAG_FIELDS = {
+    "name": "name",
+    "color": "color",
+    "ruleType": "rule_type",
+    "ruleText": "rule_text",
+    "criticalityScore": "criticality_score",
+    "description": "description",
+    "created": "created_datetime",
+    "modified": "modified_datetime",
+    "parentTagId": "parent_tag_id",
+}
+_RESPONSE_CODE = re.compile(r"[A-Z_]{1,64}")
+
+
+def _tag(node: Element) -> dict[str, Any]:
+    record: dict[str, Any] = {"tag_id": _text(node, "id")}
+    for element, name in _TAG_FIELDS.items():
+        record[name] = _text(node, element, exact=element in ("ruleText", "description"))
+    children = node.find("children")
+    if children is None:
+        record["child_tag_ids"] = None  # not returned: unobserved, never "no children"
+    else:
+        listed = children.find("list")
+        simple = [] if listed is None else [c for c in listed if c.tag in ("SimpleTag", "TagSimple")]
+        record["child_tag_ids"] = [_text(c, "id") for c in simple]
+    return record
+
+
+def parse_tag_page(body: bytes) -> TagPage:
+    """A tag-search page, refused unless Qualys answered SUCCESS with a ``data`` list of tags."""
+    if len(body) > MAX_PAGE_BYTES:
+        raise PageRefused(f"page larger than {MAX_PAGE_BYTES} bytes")
+    if not body.strip():
+        raise EmptyBody("the page is empty")
+    root = _bounded_parse(body)
+    if root.tag != "ServiceResponse":
+        raise PageRefused(f"root element is {root.tag}, expected ServiceResponse")
+    code = _text(root, "responseCode")
+    if code != "SUCCESS":
+        # Only a code of the documented shape is named; any other text Qualys sent stays out of the run's record.
+        shown = code if code is not None and _RESPONSE_CODE.fullmatch(code) else "an unreadable code"
+        raise PageRefused(f"the tag search answered {shown}, not SUCCESS")
+    data = root.find("data")
+    if data is None and _text(root, "count") != "0":
+        raise PageRefused("the tag search answered SUCCESS with no data list")
+    more = _text(root, "hasMoreRecords")
+    return TagPage(
+        tags=[_tag(t) for t in (data if data is not None else []) if t.tag == "Tag"],
+        has_more={"true": True, "false": False}.get(more or ""),
+        last_id=_text(root, "lastId"),
+        count=_text(root, "count"),
     )

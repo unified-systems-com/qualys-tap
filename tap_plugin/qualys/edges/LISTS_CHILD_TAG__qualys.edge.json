@@ -1,0 +1,17 @@
+{
+  "slug": "LISTS_CHILD_TAG__qualys",
+  "name": "Lists Child Tag",
+  "description": "Qualys lists the target tag in the source tag's children list. One edge per parent and child, from the parent to the child; a complete tag list states each child's whole set of parents, so an edge Qualys no longer lists is ended (req-qualys-tags-3).",
+  "sources": [
+    "qualys__qualys_tag"
+  ],
+  "targets": [
+    "qualys__qualys_tag"
+  ],
+  "identity": {
+    "discriminators": []
+  },
+  "default_dimensions": {
+    "qualys.area": "tagging"
+  }
+}

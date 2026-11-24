@@ -23,7 +23,7 @@ Qualys already does the hard part. Its agents and scanners find vulnerabilities,
 
 Eight consequences shape v0:
 
-1. **Read-only actions only.** Every request the plugin can send is on an enumerated list of read operations, and the transport refuses everything else. Every v0 read is a GET, because every read Qualys documents for host detection and the knowledge base accepts one. A POST is admitted only for a read that has no GET form, named on the list by a spec change (ruled 2026-11-20, Q8a). The credential is a Reader user with API access only, scoped to the in-scope asset groups or tags, so a bug here cannot change Qualys.
+1. **Read-only actions only.** Every request the plugin can send is on an enumerated list of read operations, and the transport refuses everything else. Every detection and knowledge-base read is a GET, because every read Qualys documents for them accepts one. A POST is admitted only for a read that has no GET form, named on the list by a spec change (ruled 2026-11-20, Q8a); the one such read is the tag search, whose body can carry paging and nothing else (ruled 2026-11-23, `req-qualys-tags`). The credential is a Reader user with API access only, scoped to the in-scope asset groups or tags, so a bug here cannot change Qualys.
 2. **Qualys's data in Qualys's shape; link, never merge.** The subscription, scan run, host, detection and QID are Qualys-owned nodes. The EC2 instance, the package and the shared vulnerability belong to other plugins and are reached by edge. A ruled exception (2026-11-17, for every scanner): beside its own records the plugin writes `compliance_core`'s neutral finding, one per Qualys host and CVE. It also creates the shared vulnerability record a CVE names when the grid holds none, and gives a record with no CVSS score the one Qualys's knowledge base carries. Following the Tenable ruling of 2026-11-19 (Q62), adopted here on 2026-11-20 (Q8b), a package a parser is sure of is created with its key fields only when the grid holds none. Nothing else on a record another producer shares is changed. The EC2 instance is never written.
 3. **Qualys says when a detection is fixed.** A detection resolves only when Qualys reports it `Fixed`. Qualys marks a detection fixed only after a scan or an agent check looked for it and did not find it, which is a better test than any absence the plugin could infer. So a detection that is merely absent from a read never resolves (ruled 2026-11-20, Q7c).
 4. **Three states, never two.** Several situations are each recorded as what they are, never as clean or as "no package": a scope that could not be read, a page that failed validation, a QID with no knowledge-base record, a detection whose result text has no parser, and a parser that failed. A fact nothing observed is `null`.
@@ -83,6 +83,8 @@ Eight consequences shape v0:
 | req-qualys-package-link | [Package Link](#package-link) | In Development | A detection links to a `computing_core` package only when the parser is sure; an absent package is created with its key fields |
 | req-qualys-file-import | [Export Archive Import](#export-archive-import) | In Development | The collector loads an archive from `tools/qualys-export/` through the same parser, contract check and resolution rules, recorded as file-sourced |
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
+| req-qualys-tags | [Asset Tags](#asset-tags) | In Development | Every tag the credential can see, from the tag search, as a node keyed by tag id, linked to its subscription and its children; a complete list withdraws a tag it lacks |
+| req-qualys-sources | [Source Switches](#source-switches) | In Development | Detections, the knowledge base and tags each switched on or off per envelope, all on by default; a source switched off is recorded as not read, never as empty |
 | req-qualys-chunked-write | [Chunked Write](#chunked-write) | In Development | A run is written as bounded batches, each its own transaction, opening first and a seal last, so a big run cannot exhaust Postgres's lock table and a failure never moves the watermark |
 | req-qualys-event-time | [Event Time](#event-time) | In Development | Each model's event time declared for core's `req-grid-entity-event-time`: a detection's first found time, a QID's published time, none for the rest |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
@@ -114,6 +116,7 @@ The secret is a plugin secret: its consumer is the Qualys collector, so the enve
 - `subscription`: an operator-chosen label naming the subscription, such as `acme-prod`. Required. Qualys is a shared service, so many subscriptions answer on one API host, and the host alone cannot identify one. Whether Qualys reports a subscription identifier the plugin could read instead is open in the observation ledger (`subscription-identity`).
 - `username`, `password`: a Qualys user with the Reader role and the API Access permission, without UI access where the subscription allows. Required. A username containing `:` is refused, because HTTP Basic separates the user from the password with one.
 - `ca_bundle`: the absolute path of a PEM file on the host, never its contents. Optional.
+- `sources`: optional, an object of booleans, `detections`, `knowledgebase` and `tags`, each on unless set `false` (`req-qualys-sources`). An envelope with every source off is refused, because it has nothing to read.
 - `scope`: optional server-side filters, an object with at most one of `asset_group_ids` (a list of integers) or `tag_ids` (a list of integers), sent as Qualys's `ag_ids`, or as `use_tags=1&tag_set_by=id&tag_include_selector=any&tag_set_include=<ids>` (a host matching any one of the tags; the standing scope has no other selector). The scope is the subscription's **standing scope**: it is recorded on the subscription node and on every run, and a read made with it is a complete read of that scope (`req-qualys-detection-read`, `req-qualys-states`).
 
 The envelope's description states the least-privilege shape: a Reader with API access only, scoped to the asset groups or tags that hold the in-scope AWS hosts. The collector reads every envelope in scope `qualys`. Each yields one subscription node, keyed by the canonical `api_host` and the `subscription` label together, encoded without ambiguity (`req-qualys-subscription-run`). An envelope that fails validation fails only its own run, naming `qualys:<key>`. These credentials have no scannable shape: a Qualys username carries a subscription prefix but no issuer marker, and the password is free text. So no `CredentialPattern` and no entropy rule is added. Protection rests on the envelope layer, the leak guard, `.gitignore` and redaction. The credential reaches `requests` as an auth tuple, never in a URL. No object holding it shows it in its `__repr__`, and no log line, scan-run field or exception carries a value.
@@ -146,15 +149,16 @@ How requests leave the plugin. A small client of our own over `requests`. Every 
 - any override of TLS verification, client certificate or proxies, with `trust_env` off so no proxy, CA bundle or netrc credential is taken from the environment;
 - any operation not on the allowlist.
 
-The allowlist is the plugin's one definition of "read", and a change to it is a spec change. In v0 it holds four operations, all GET:
+The allowlist is the plugin's one definition of "read", and a change to it is a spec change. It holds five operations, four GET and one POST:
 
 - `GET /api/6.0/fo/asset/host/vm/detection/` with `action=list`;
 - `GET /api/4.0/fo/knowledge_base/vuln/` with `action=list`;
-- `GET /api/6.0/fo/asset/host/vm/detection/dtd/output.dtd` and `GET /api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd`, the two output DTDs, with no parameters at all. The observation command reads them (`req-qualys-observe`); the collector does not.
+- `GET /api/6.0/fo/asset/host/vm/detection/dtd/output.dtd` and `GET /api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd`, the two output DTDs, with no parameters at all. The observation command reads them (`req-qualys-observe`); the collector does not;
+- `POST /qps/rest/2.0/search/am/tag`, the Asset Management and Tagging tag search (`req-qualys-tags`). It is the only way Qualys lists tags: the API's only tag GET returns one tag by id. The request has no query string, is sent as `text/xml`, and its body must match one fixed template exactly: `<ServiceRequest><preferences>`, an optional `<startFromId>` of digits, a `<limitResults>` of digits, and nothing else. The client builds that body itself, and `send` re-checks it, so the POST can carry no criteria, no tag data and no other operation. An anonymous client may not send it.
 
 A client built with no credential (`ReadOnlyClient.anonymous`) sends no `Authorization` header and may send only the two DTD reads; a credentialed client refuses to be built with an empty username or password, and the transport treats anything short of both as no credential, so the observation command can learn whether Qualys serves them without one. An optional observer on the client sees every response, with the response headers minus `Set-Cookie` and only the names of the request headers, so the observation command can record it.
 
-The two list operations each name the parameters they may carry, as pinned values or as free values of a stated shape (digits, a comma-separated id list, an ISO-8601 time). An unnamed parameter is refused. A POST is admitted only for a read Qualys offers in no GET form, added to the list by a spec change (ruled 2026-11-20, Q8a); none is needed in v0.
+The two list operations each name the parameters they may carry, as pinned values or as free values of a stated shape (digits, a comma-separated id list, an ISO-8601 time). An unnamed parameter is refused. A POST is admitted only for a read Qualys offers in no GET form, added to the list by a spec change (ruled 2026-11-20, Q8a); the tag search is the one admitted (ruled 2026-11-23, when George chose to collect every tag in the subscription knowing the list needs a POST).
 
 Authentication is HTTP Basic with the `X-Requested-With` header Qualys requires. The session-login endpoint (`/api/2.0/fo/session/`) is not on the list, so that path is unreachable. Calls run one at a time, because the standard tier allows 2 concurrent calls per API shared by every integration on the subscription.
 
@@ -179,7 +183,7 @@ Responses are bounded before parsing: a body over 256 MiB is refused, and so is 
 | req-qualys-transport-5 | Next Page Stays Put | Proposed | A next-page URL naming another host, another path or an unlisted parameter ends the read as a recorded failure. | |
 | req-qualys-transport-6 | Hostile XML Refused | Proposed | A body over the size ceiling, nested past the depth ceiling, or declaring entities is refused and recorded as not read, never partly stored; tests feed each case. | `defusedxml`. |
 | req-qualys-transport-7 | Verification Cannot Be Overridden | Proposed | A per-request `verify`, `cert` or `proxies` override is refused; the CA bundle is applied on the session by the plugin only. | |
-| req-qualys-transport-8 | POST Only By Spec Change | Proposed | The v0 allowlist holds no POST; a test fails if one is added without a matching row in this requirement. | Ruled 2026-11-20 (Q8a). |
+| req-qualys-transport-8 | POST Only By Spec Change | Proposed | The allowlist holds exactly one POST, the tag search, and a test fails if the POST list changes. That POST is refused unsent with a query string, with any content type but `text/xml`, with a body outside its template (criteria, tag data, anything else), from an anonymous client, and on any other path, the tag create, update and delete paths among them; a GET to the tag search path is refused too. | Ruled 2026-11-20 (Q8a); the tag search admitted 2026-11-23. `test_qualys_tags.py::TestTheOnePost`. |
 | req-qualys-transport-9 | Transient Failures Retried, Waits Outside The Ceiling | Proposed | A 429 or 5xx in the transient set, or a network error, is retried at most 3 times with backoff inside the total wait bound; other failures are not retried; a 1960 wait is at least 30 seconds; the per-request ceiling wraps each attempt and no wait runs inside it; no attempt starts once the run's ceiling has passed, and no wait starts that would reach it. | unified-systems-com/qualys-tap#47, #48, #49. |
 
 ### Probe And Provenance
@@ -742,6 +746,7 @@ Qualys returns its times as `YYYY-MM-DDTHH:MM:SSZ` text, one of the FHIR forms c
 | Detection | `Moment(first_found_datetime, first_seen)` | A finding is declared at its creation (core rule 13). Not an interval ending at `LAST_FIXED_DATETIME`: Qualys keeps that value when a fixed detection reopens, so the span would read closed while the detection is active again. |
 | QID | `Moment(published_datetime, published)` | When Qualys published the record. `LAST_SERVICE_MODIFICATION_DATETIME` is Qualys editing its own record and is not declared (core rule 13). |
 | Host | `NO_EVENT_TIME` | Its times are last-scan times, which are last-seen times and stay typed fields (core rule 14). The read carries no time for when the host came to exist. |
+| Tag | `Moment(created_datetime, created)` | When Qualys records the tag was made. `modified` is its last change, not an end, and stays a typed field. |
 | Scan Run | `NO_EVENT_TIME` | A run is a collection and its times are the collector's own clock: collection time, never declared (core rule 13; `req-grid-entity-collection-time`). |
 | Subscription | `NO_EVENT_TIME` | Configuration; its watermark and last complete read are set by this plugin's reads, not stated by Qualys. |
 
@@ -756,6 +761,57 @@ A value core cannot read is kept in the typed field as Qualys sent it and left o
 | req-qualys-event-time-1 | Every Model Declares | Proposed | Every model declares the event time in the table above, and core's `declaration_problems` finds nothing wrong with any of them. | `TestDeclarations`. |
 | req-qualys-event-time-2 | Derived From Qualys's Text | Proposed | After an import, a detection's spine holds its first found time and a QID's its published time, each at precision `second` with its kind as the `time` dimension; a row whose field is empty, and every type declaring none, holds nothing. | `TestDerivedFromQualysText`. |
 | req-qualys-event-time-3 | Malformed Value Kept, Not Guessed | Proposed | A detection whose first found time is not a readable value keeps the text in its typed field and has no event time. | `TestDerivedFromQualysText.test_a_malformed_time_is_kept_as_sent_and_left_off_the_spine`, on Qualys's documented sample. |
+
+### Asset Tags
+----
+RID: `req-qualys-tags`
+
+Status: `In Development`
+
+Every asset tag of the subscription on the grid, kept current as tags are renamed, re-parented and deleted, so later work can filter by tag name and resolve a name to its id from the grid (asked 2026-11-23; filtering is not part of this requirement). Qualys has one tagging system across its applications, the Asset Management and Tagging tags, which VMDR's host detection filters on and Global AssetView shows; that these are the same objects is inferred from Qualys's documentation and not yet confirmed by a read.
+
+#### Implementation
+
+When the envelope leaves `tags` on (`req-qualys-sources`), a live run ends with the tag search, `POST /qps/rest/2.0/search/am/tag` (`req-qualys-transport-8`). It asks for 100 tags a page, Qualys's documented default, and pages by tag id: each next page starts at the last id seen. Qualys does not document whether `startFromId` includes the id it names, so a tag already read is skipped and either reading gives every tag once. The list is **complete** only when a page says `hasMoreRecords` false. It is incomplete, with a `TRUNCATED` warning, when a page does not say, when a page that says more follow moves nothing forward, or when a page returns an unread tag below its start id, because the walk assumes id order and that tag means it may have skipped one. It is also incomplete when a page is not read (listed on the run as `tag page <n>`, `not read: <type>`), when the run's ceiling or the page ceiling stops it, and when a tag has no usable id. A response that is not `SUCCESS` is a page not read; only a code of the documented shape is named. A failed tag read never changes the detection read, its watermark or its withdrawals, and the collector records `TAGS_INCOMPLETE`.
+
+Each tag is a `qualys__qualys_tag` node keyed by subscription and tag id, never by name, so a rename is the node's history. It holds Qualys's values as returned: `name`, `color`, `rule_type`, `rule_text`, `criticality_score`, `description`, `created_datetime`, `modified_datetime`, `parent_tag_id` and `child_tag_ids`. A field the response did not carry is null; a children list not returned is null, never "no children". Its dimension is `qualys.area: tagging`, and its event time is `Moment(created_datetime, created)`: when Qualys records the tag was made. `modified` is a last change, not an end, and stays a typed field.
+
+`TAG_OF_SUBSCRIPTION__qualys` runs from each tag to its subscription. `LISTS_CHILD_TAG__qualys` runs from a tag to each child its children list names, when the list also holds that child. On a complete list whose every children list was returned, the run claims each tag's inbound child edges whole (`req-grid-reconcile-edge-authority`), so an edge to a parent Qualys no longer lists is proposed for removal; otherwise the claims say partial and propose nothing.
+
+A tag a complete list does not contain is rewritten `withdrawn` with the run's id, every other field as held; it is unobserved, not deleted, and the next list that contains it makes it current again. An incomplete list withdraws nothing. A file run reads no tags and changes none.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-qualys-tags-1 | Every Tag As Returned | Proposed | After a run, every tag the list returned is a node with its fields as returned, an edge to its subscription, an edge to each listed child, `qualys.area: tagging`, and its creation as its event time; a children list not returned is null. | `test_qualys_tags.py::TestTagPage`, `TestTagsOnTheGrid`. Synthetic fixtures from the documented shape. |
+| req-qualys-tags-2 | Complete Only At Qualys's Last Page | Proposed | The list is complete only when a page says no more follow; a page not read, a page that does not say, a page that moves nothing forward, a tag below its page's start and a tag with no usable id each leave it incomplete, and a failed tag read leaves the detection read untouched. | `TestTheWalk`, `TestTagsOnTheGrid.test_a_failed_tag_read_does_not_touch_the_detection_read`. |
+| req-qualys-tags-3 | Keyed By Id | Proposed | A tag renamed in Qualys is the same node with its new name. | `TestTagsOnTheGrid.test_a_rename_is_the_same_node`. |
+| req-qualys-tags-4 | Withdrawn Only By A Complete List | Proposed | A held tag a complete list lacks is rewritten `withdrawn` with the run's id; after an incomplete list no tag is withdrawn. | `TestTagsOnTheGrid.test_a_complete_list_withdraws_a_tag_it_lacks_and_an_incomplete_one_does_not`. |
+
+### Source Switches
+----
+RID: `req-qualys-sources`
+
+Status: `In Development`
+
+Qualys is many services stacked on one another, and a subscription may want some of what this plugin reads and not the rest. The envelope's `sources` switches each kind of Qualys data on or off (asked 2026-11-23). All three are on by default, so an envelope that says nothing reads everything.
+
+#### Implementation
+
+- `detections`: the host detection walk, and with it the hosts, the detections, and everything derived from them (neutral findings, package links, EC2 links). Off, the run reads the probe only, because the probe is how the credential is checked; the run is `narrower`, so it withdraws no host and the watermark stays.
+- `knowledgebase`: the knowledge-base read for the QIDs the detections name. Off, no QID is asked, so a QID the grid does not hold is written as a stub whose `kb_returned` is null (unobserved), and the neutral rules treat its CVE list as unknown, so no finding on that host is moved to resolved.
+- `tags`: the tag search (`req-qualys-tags`). Off, no POST is sent and no tag is read or changed.
+
+A source switched off is listed on every run in `scopes_not_read` as `{scope: <source>, reason: switched off}`, never as an empty answer, and the run's summary names it. An envelope with every source off is refused before any request.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-qualys-sources-1 | On By Default, Recorded When Off | Proposed | An envelope without `sources` reads all three; a source set false sends none of its requests and is listed on the run as switched off; every source off is refused. | `test_qualys_tags.py::TestSourceSwitches`. |
+| req-qualys-sources-2 | Detections Off Changes No Host | Proposed | With detections off the run sends only the probe to host detection and none to the knowledge base, is `narrower`, leaves the watermark, and withdraws no host. | `TestSourceSwitches.test_detections_off_reads_the_probe_only_and_changes_no_host`. |
+| req-qualys-sources-3 | Knowledge Base Off Leaves QIDs Unobserved | Proposed | With the knowledge base off no knowledge-base request is sent and a new QID's `kb_returned` is null. | `TestSourceSwitches.test_knowledgebase_off_leaves_new_qids_unobserved`. |
 
 ### v0 Non-Goals
 ----
@@ -794,6 +850,7 @@ A design-time catalog, superseded by the manifest once the plugin ships.
 | Host | `qualys__qualys_host` | Qualys-specific | A machine as Qualys tracks it, by agent or by address; Qualys's view, linked to the EC2 instance. |
 | Detection | `qualys__qualys_detection` | Qualys-specific | Qualys's assertion that a QID was found on a host, with its history and result text. |
 | QID | `qualys__qualys_qid` | Qualys-specific | The knowledge-base record behind a QID; carries the CVE fan-out so detections do not. |
+| Tag | `qualys__qualys_tag` | Qualys-specific | An asset tag of the subscription, keyed by Qualys's tag id so a rename is its history (`req-qualys-tags`). |
 
 ## Edge types
 
@@ -801,6 +858,8 @@ A design-time catalog, superseded by the manifest once the plugin ships.
 | --- | --- | --- | --- |
 | `RUN_OF_SUBSCRIPTION__qualys` | scan run → subscription | none | Which subscription a run read. |
 | `DETECTED_ON_HOST__qualys` | detection → host | none | The host a detection concerns. |
+| `TAG_OF_SUBSCRIPTION__qualys` | tag → subscription | none | Which subscription's tag search returned a tag. |
+| `LISTS_CHILD_TAG__qualys` | tag → tag | none | Qualys lists the target in the source's children list; a complete list claims each child's parents whole. |
 | `ABOUT_QID__qualys` | detection → QID | none | What the detection means. |
 | `LAST_SEEN_IN_RUN__qualys` | host or detection → scan run | none | The run that last read it, moved each run. |
 | `ABOUT_VULNERABILITY__qualys` | QID → `compliance_vulnerability` | none | One per CVE in the QID's list; drawn from the QID, never the detection. |

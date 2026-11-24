@@ -18,7 +18,8 @@ from tap_grid.event_time import NO_EVENT_TIME, TIME_DIMENSION, Moment, declarati
 from tap_grid.grift.importer import grift_import
 from tap_plugin.qualys.decompose import COMPLETE, Run, decompose, document
 from tap_plugin.qualys.identity import subscription_key
-from tap_plugin.qualys.models import QualysDetection, QualysHost, QualysQid, QualysScanRun, QualysSubscription
+from tap_plugin.qualys import models as qualys_models
+from tap_plugin.qualys.models import QualysDetection, QualysHost, QualysQid, QualysScanRun, QualysSubscription, QualysTag
 from tap_plugin.qualys.parse import parse_detection_page, parse_knowledgebase_page
 from tap_plugin.qualys.store import GridStore
 
@@ -59,7 +60,10 @@ class TestDeclarations:
             QualysHost: NO_EVENT_TIME,
             QualysScanRun: NO_EVENT_TIME,
             QualysSubscription: NO_EVENT_TIME,
+            QualysTag: Moment(field="created_datetime", kind="created"),
         }
+        # Every model the plugin exports is in the table, so a new type cannot skip its decision.
+        assert {m.__name__ for m in expected} == set(qualys_models.__all__)
         for model, declaration in expected.items():
             assert model.EVENT_TIME == declaration, model.__name__
             assert declaration_problems(model) == [], model.__name__

@@ -41,6 +41,7 @@ class QualysSubscription(BaseModel):
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = []
     INBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
         {"nodes": [{"type": "qualys__qualys_scan_run"}], "edges": [{"type": "RUN_OF_SUBSCRIPTION__qualys"}]},
+        {"nodes": [{"type": "qualys__qualys_tag"}], "edges": [{"type": "TAG_OF_SUBSCRIPTION__qualys"}]},
     ]
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, Any]] = {

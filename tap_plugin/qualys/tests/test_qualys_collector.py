@@ -24,7 +24,7 @@ from requests.adapters import HTTPAdapter
 from tap_cares.collectors.config import CollectorConfig
 from tap_grid.grift.importer import grift_import
 from tap_plugin.qualys import live
-from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadOnlyClient
+from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, TAG_SEARCH_PATH, ReadOnlyClient
 from tap_plugin.qualys.collectors import qualys_collector
 from tap_plugin.qualys.collectors.qualys_collector import QualysCollector, QualysCollectorError
 from tap_plugin.qualys.decompose import COMPLETE, WINDOW
@@ -68,6 +68,10 @@ class Router(HTTPAdapter):
             if "kb" in self.overrides:
                 return self.overrides["kb"](query)
             return 200, _fixture("kb-documented.xml"), headers
+        if parts.path == TAG_SEARCH_PATH and request.method == "POST":
+            if b"<startFromId>" in (request.body or b""):
+                return self.overrides.get("tags2", (200, _fixture("tags-synthetic-2.xml"), headers))
+            return self.overrides.get("tags1", (200, _fixture("tags-synthetic-1.xml"), headers))
         return 404, b"", {}
 
     def send(self, request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
@@ -148,13 +152,23 @@ class TestFirstRun:
         for request in router.seen:
             parts = urlsplit(request.url)
             query = parse_qs(parts.query)
-            kinds.append("probe" if query.get("truncation_limit") == ["1"] else "kb" if parts.path == KNOWLEDGEBASE_PATH else "page")
-        assert kinds == ["probe", "page", "page", "kb"]
+            kinds.append(
+                "probe" if query.get("truncation_limit") == ["1"]
+                else "kb" if parts.path == KNOWLEDGEBASE_PATH
+                else "tags" if parts.path == TAG_SEARCH_PATH
+                else "page"
+            )
+        assert kinds == ["probe", "page", "page", "kb", "tags", "tags"]
 
     def test_every_request_is_an_allowlisted_get_with_all_statuses(self, secrets, monkeypatch: pytest.MonkeyPatch) -> None:
         router = Router()
         _collector(monkeypatch, router).run()
         for request in router.seen:
+            if urlsplit(request.url).path == TAG_SEARCH_PATH:
+                # The one POST read (req-qualys-transport-8): its body carries paging preferences and nothing else.
+                assert request.method == "POST" and request.body.startswith(b"<ServiceRequest><preferences>")
+                assert b"<filters>" not in request.body and "Cookie" not in request.headers
+                continue
             assert request.method == "GET" and request.body is None and "Cookie" not in request.headers
             assert PASSWORD not in request.url
             query = parse_qs(urlsplit(request.url).query)

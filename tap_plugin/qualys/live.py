@@ -34,14 +34,22 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import requests
-
-from tap_plugin.qualys.client import DETECTION_PATH, KNOWLEDGEBASE_PATH, ReadFailed, ReadOnlyClient, Response, TransportRefused
+from tap_plugin.qualys.client import (
+    DETECTION_PATH,
+    HOST_ASSET_IDS_PER_REQUEST,
+    KNOWLEDGEBASE_PATH,
+    ReadFailed,
+    ReadOnlyClient,
+    Response,
+    TransportRefused,
+)
 from tap_plugin.qualys.parse import (
     DetectionPage,
     EmptyBody,
     KnowledgeBasePage,
     PageRefused,
     parse_detection_page,
+    parse_host_asset_page,
     parse_knowledgebase_page,
     parse_tag_page,
 )
@@ -165,6 +173,17 @@ class TagRead:
 
 
 @dataclass
+class HostAssetRead:
+    """The host asset search for the hosts the detection read saw: each one's inventory, by Qualys host id."""
+
+    assets: dict[str, dict[str, Any]] = field(default_factory=dict)
+    complete: bool = False
+    pages: int = 0
+    not_read: list[dict[str, str]] = field(default_factory=list)
+    warnings: list[dict[str, str]] = field(default_factory=list)
+
+
+@dataclass
 class LiveRead:
     """What one live read returned, and what it could not read."""
 
@@ -182,6 +201,8 @@ class LiveRead:
     requests: int = 0
     #: None when the envelope switched tags off; the tags otherwise, complete or not.
     tags: TagRead | None = None
+    #: None unless the envelope switched host assets on; each read host's inventory otherwise (req-qualys-host-assets).
+    host_assets: HostAssetRead | None = None
     #: The sources the envelope switched off, each recorded on the run as not read (req-qualys-sources).
     switched_off: list[str] = field(default_factory=list)
 
@@ -267,6 +288,47 @@ def read_tags(client: ReadOnlyClient, *, bounded: Bounded, time_left: Callable[[
     return got
 
 
+def read_host_assets(client: ReadOnlyClient, host_ids: list[str], *, bounded: Bounded, time_left: Callable[[], float]) -> HostAssetRead:
+    """Each host's asset record, asked by Qualys host id in groups of at most 100, each group paged to its end."""
+    got = HostAssetRead()
+    groups = [host_ids[i : i + HOST_ASSET_IDS_PER_REQUEST] for i in range(0, len(host_ids), HOST_ASSET_IDS_PER_REQUEST)]
+    whole = True
+    for number, group in enumerate(groups, 1):
+        start: str | None = None
+        for page_number in range(1, MAX_TAG_PAGES + 1):
+            if time_left() <= 0:
+                got.warnings.append({"code": "TRUNCATED", "detail": f"the host asset search stopped at the run's ceiling in group {number}"})
+                # Every group not finished is listed, never only warned about (PR #84 review).
+                got.not_read.extend({"scope": f"host asset group {n}", "reason": "not read: the run's ceiling passed"} for n in range(number, len(groups) + 1))
+                return got
+            try:
+                reply = client.search_host_assets(group, start, bound=functools.partial(_bound_attempt, bounded, f"host-assets-{number}-{page_number}"), remaining=time_left)
+                page = parse_host_asset_page(reply.body)
+            except (ReadFailed, TransportRefused, PageRefused, TimeoutError, requests.RequestException) as exc:
+                got.not_read.append({"scope": f"host asset group {number} page {page_number}", "reason": f"not read: {type(exc).__name__}"})
+                whole = False
+                break
+            got.pages += 1
+            new = [a for a in page.assets if a.get("qweb_host_id") in group and a["qweb_host_id"] not in got.assets]
+            for asset in new:
+                got.assets[asset["qweb_host_id"]] = asset
+            if page.has_more is False:
+                break
+            ids = [int(a["host_asset_id"]) for a in page.assets if (a.get("host_asset_id") or "").isdigit()]
+            last = int(page.last_id) if page.last_id and page.last_id.isdigit() else max(ids, default=None)
+            if page.has_more is None or last is None or (start is not None and last <= int(start)):
+                got.warnings.append({"code": "TRUNCATED", "detail": f"host asset group {number} page {page_number} could not prove the end of its list"})
+                whole = False
+                break
+            start = str(last)
+        else:
+            # The page ceiling stopped a group Qualys still said had more: never a complete read (PR #84 review).
+            got.warnings.append({"code": "TRUNCATED", "detail": f"the host asset search stopped at {MAX_TAG_PAGES} pages in group {number}"})
+            whole = False
+    got.complete = whole
+    return got
+
+
 def read(
     client: ReadOnlyClient,
     scope: dict[str, list[int]],
@@ -280,7 +342,7 @@ def read(
 
     ``sources`` None reads detections and the knowledge base and not the tags, for callers that predate the switches.
     """
-    on = {"detections": True, "knowledgebase": True, "tags": False, **(sources or {})}
+    on = {"detections": True, "knowledgebase": True, "tags": False, "host_assets": False, **(sources or {})}
     started = clock()
 
     def time_left() -> float:
@@ -310,7 +372,7 @@ def read(
     result.requests = 1
     if (w := _eos(probe_page, "probe")) is not None:
         result.warnings.append(w)
-    result.switched_off = [name for name in ("detections", "knowledgebase", "tags") if not on[name]]
+    result.switched_off = [name for name in ("detections", "knowledgebase", "tags", "host_assets") if not on[name]]
 
     def out_of_time() -> bool:
         return time_left() <= 0
@@ -385,6 +447,15 @@ def read(
             remaining = left
         else:
             result.knowledgebase_complete = False
+
+    if on["host_assets"] and not on["detections"]:
+        # The search asks for the hosts the detection read saw; with that read off there are none to ask for, which is
+        # not "none have inventory" (PR #84 review).
+        result.host_assets = HostAssetRead(not_read=[{"scope": "host_assets", "reason": "not read: it asks for the detection read's hosts, and detections are switched off"}])
+    elif on["host_assets"]:
+        hosts = sorted({h["host_id"] for page in result.pages for h in page.hosts if isinstance(h.get("host_id"), str) and h["host_id"].isdigit()}, key=int)
+        result.host_assets = read_host_assets(client, hosts, bounded=bounded, time_left=time_left) if hosts else HostAssetRead(complete=True)
+        result.requests += result.host_assets.pages
 
     if on["tags"]:
         result.tags = read_tags(client, bounded=bounded, time_left=time_left)

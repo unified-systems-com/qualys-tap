@@ -66,6 +66,10 @@ class QualysHost(BaseModel):
         "ec2_metadata": {"type": ["object", "null"], "additionalProperties": {"type": ["string", "null"]}},
         "ec2_metadata_status": {"type": ["object", "null"], "additionalProperties": {"type": "object"}},
         "cloud_tags": {"type": ["array", "null"], "items": {"type": "object"}},
+        "host_asset_id": _STR_OR_NULL,
+        "interfaces": {"type": ["array", "null"], "items": {"type": "object"}},
+        "open_ports": {"type": ["array", "null"], "items": {"type": "object"}},
+        "software": {"type": ["array", "null"], "items": {"type": "object"}},
         "state": {"type": ["string", "null"], "enum": ["current", "withdrawn", None]},
         "withdrawn_in_run": _STR_OR_NULL,
     }
@@ -125,6 +129,18 @@ class QualysHost(BaseModel):
     )
     cloud_tags = models.JSONField(
         null=True, blank=True, default=None, help_text="The CLOUD_TAGS as returned, from show_cloud_tags=1; [] when none."
+    )
+    host_asset_id = models.CharField(
+        max_length=32, null=True, blank=True, default=None, help_text="The Asset Management host asset id, from the host asset search; null when not read."
+    )
+    interfaces = models.JSONField(
+        null=True, blank=True, default=None, help_text="networkInterface as returned by the host asset search; null when not read (req-qualys-host-assets)."
+    )
+    open_ports = models.JSONField(
+        null=True, blank=True, default=None, help_text="openPort as returned by the host asset search; null when not read."
+    )
+    software = models.JSONField(
+        null=True, blank=True, default=None, help_text="software as returned by the host asset search (name and version); null when not read."
     )
     state = models.CharField(
         max_length=16,

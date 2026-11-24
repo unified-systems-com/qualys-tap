@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic: built from the documented shape of the host asset search response (docs.qualys.com/en/am/api/host_assets/
+     search_host_assets.htm and get_host_asset_info.htm, read 2026-11-23), not captured from a subscription. -->
+<ServiceResponse xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://qualysapi.qg2.apps.qualys.com/qps/xsd/2.0/am/hostasset.xsd">
+  <responseCode>SUCCESS</responseCode>
+  <count>2</count>
+  <hasMoreRecords>false</hasMoreRecords>
+  <data>
+    <HostAsset>
+      <id>7727721</id>
+      <qwebHostId>1001</qwebHostId>
+      <networkInterface>
+        <list>
+          <HostAssetInterface>
+            <hostname>ip-10-0-1-15</hostname>
+            <interfaceId>eni-09f901fe</interfaceId>
+            <interfaceName>eth0</interfaceName>
+            <macAddress>0e:1a:2b:3c:4d:5e</macAddress>
+            <type>PRIVATE</type>
+            <address>10.0.1.15</address>
+            <gatewayAddress>10.0.1.1</gatewayAddress>
+          </HostAssetInterface>
+          <HostAssetInterface>
+            <interfaceName>lo</interfaceName>
+            <type>LOCAL</type>
+            <address>127.0.0.1</address>
+          </HostAssetInterface>
+        </list>
+      </networkInterface>
+      <openPort>
+        <list>
+          <HostAssetOpenPort><port>22</port><protocol>TCP</protocol><serviceId>1</serviceId><serviceName>ssh</serviceName></HostAssetOpenPort>
+          <HostAssetOpenPort><port>443</port><protocol>TCP</protocol></HostAssetOpenPort>
+        </list>
+      </openPort>
+      <software>
+        <list>
+          <HostAssetSoftware><name>openssl</name><version>1.0.2k-19.el7</version></HostAssetSoftware>
+        </list>
+      </software>
+    </HostAsset>
+    <HostAsset>
+      <id>7727722</id>
+      <qwebHostId>524323</qwebHostId>
+      <openPort><list/></openPort>
+    </HostAsset>
+  </data>
+</ServiceResponse>

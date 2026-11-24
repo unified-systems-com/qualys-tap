@@ -26,7 +26,9 @@ SCOPE = "qualys"
 KIND = "qualys_api_credential"
 SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "qualys_api_credential.schema.json"
 #: The kinds of Qualys data a run can read, each on unless the envelope switches it off (req-qualys-sources).
-SOURCES = ("detections", "knowledgebase", "tags")
+SOURCES = ("detections", "knowledgebase", "tags", "host_assets")
+#: Each source's default: on, except host assets, which need Asset Management's "Read Asset" permission as well.
+SOURCE_DEFAULTS = {"detections": True, "knowledgebase": True, "tags": True, "host_assets": False}
 #: What a run may write beyond Qualys's own types, each off unless the envelope turns it on (req-qualys-aws).
 INTEGRATIONS = ("aws",)
 
@@ -115,7 +117,7 @@ def credential_from_envelope(envelope: SecretEnvelope) -> Credential:
             raise CredentialError(qualified, f"{name} has characters HTTP Basic auth cannot carry (Latin-1 only)") from None
     scope = data.get("scope") or {}
     switches = data.get("sources") or {}
-    sources = tuple((name, switches.get(name, True)) for name in SOURCES)
+    sources = tuple((name, switches.get(name, SOURCE_DEFAULTS[name])) for name in SOURCES)
     if not any(on for _, on in sources):
         raise CredentialError(qualified, "every source is switched off, so there is nothing to read")
     return Credential(

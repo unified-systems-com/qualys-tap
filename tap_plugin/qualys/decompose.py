@@ -164,6 +164,9 @@ class Run:
     #: Whether that list is the whole list: every page read to Qualys's last, and every tag keyable.
     tags_complete: bool = False
     tags_not_read: list[dict[str, str]] = field(default_factory=list)
+    #: Each read host's asset record by Qualys host id (req-qualys-host-assets); None when the run read none.
+    host_assets: dict[str, dict[str, Any]] | None = None
+    host_assets_not_read: list[dict[str, str]] = field(default_factory=list)
     #: Whether the envelope turned the AWS integration on (req-qualys-aws): mint absent aws_core nodes.
     aws: bool = False
     #: The sources the envelope switched off (req-qualys-sources), each listed on the run as not read.
@@ -308,6 +311,30 @@ def _tags(key: str, run: Run, grid: GridView, result: Result) -> None:
         rewritten = {**stored, "state": "withdrawn", "withdrawn_in_run": run.run_id}
         result.nodes.append(envelope(f"tw{tag_id}", QualysTag, stored.get("name") or f"tag {tag_id}", rewritten))
         result.count("tags_withdrawn")
+
+
+_INVENTORY = ("host_asset_id", "interfaces", "open_ports", "software")
+
+
+def _inventory(key: str, run: Run, grid: GridView, result: Result, seen_hosts: set[str]) -> None:
+    """Each written host's inventory from this run's host asset search, else as the grid holds it (req-qualys-host-assets).
+
+    A host node is written whole, so a host this run did not read an asset record for keeps what an earlier read
+    gave: not read is never "none".
+    """
+    assets = run.host_assets or {}
+    need_held = [h for h in seen_hosts if h not in assets]
+    held = grid.current_hosts(key) if need_held else {}
+    for node in result.nodes:
+        if node["entity"]["entity_type"] != QualysHost.ENTITY_TYPE or node["node"].get("host_id") not in seen_hosts:
+            continue
+        host_id = node["node"]["host_id"]
+        source = assets.get(host_id)
+        if source is not None:
+            result.count("host_assets_read")
+        source = source if source is not None else held.get(host_id, {})
+        for name in _INVENTORY:
+            node["node"][name] = source.get(name)
 
 
 def _host_node(ref: str, key: str, record: dict[str, Any], result: Result) -> dict[str, Any]:
@@ -620,9 +647,10 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             result.scopes_not_read.append({"scope": f"detection page {number + 1}", "reason": "partly read: an entry had no usable key"})
     result.count("hosts", len(seen_hosts))
     result.count("detections", len(seen_detections))
+    _inventory(key, run, grid, result, seen_hosts)
     minted: set[str] | None = None
     if run.aws:
-        aws = aws_mint.mint((h for page in pages for h in page.hosts), grid)
+        aws = aws_mint.mint((h for page in pages for h in page.hosts), grid, run.host_assets or {})
         if not aws.absent:
             # Shared records: written before the hosts whose EC2 link names an instance by key.
             result.nodes.extend(aws.nodes)
@@ -706,6 +734,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
             + run.detection_pages_not_read
             + result.scopes_not_read
             + run.tags_not_read
+            + run.host_assets_not_read
         ),
         "archive_sha256": run.archive_sha256,
         "export_created_at": parse_time(run.export_created_at),

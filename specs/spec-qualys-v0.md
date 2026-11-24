@@ -85,6 +85,7 @@ Eight consequences shape v0:
 | req-qualys-fips | [FIPS Posture](#fips-posture) | In Development | `requests` over the system OpenSSL and pure-Python `defusedxml`, declared in `[fips]` |
 | req-qualys-tags | [Asset Tags](#asset-tags) | In Development | Every tag the credential can see, from the tag search, as a node keyed by tag id, linked to its subscription and its children; a complete list withdraws a tag it lacks |
 | req-qualys-sources | [Source Switches](#source-switches) | In Development | Detections, the knowledge base and tags each switched on or off per envelope, all on by default; a source switched off is recorded as not read, never as empty |
+| req-qualys-host-assets | [Host Inventory](#host-inventory) | In Development | Opt-in: each read host's interfaces, open ports and software from the Asset Management host asset search, kept on the host as returned; ENIs minted with the AWS integration |
 | req-qualys-chunked-write | [Chunked Write](#chunked-write) | In Development | A run is written as bounded batches, each its own transaction, opening first and a seal last, so a big run cannot exhaust Postgres's lock table and a failure never moves the watermark |
 | req-qualys-event-time | [Event Time](#event-time) | In Development | Each model's event time declared for core's `req-grid-entity-event-time`: a detection's first found time, a QID's published time, none for the rest |
 | req-qualys-policy-compliance | Policy Compliance | Backlog | Qualys Policy Compliance (PC) posture results as their own type, like Tenable's compliance results |
@@ -149,12 +150,13 @@ How requests leave the plugin. A small client of our own over `requests`. Every 
 - any override of TLS verification, client certificate or proxies, with `trust_env` off so no proxy, CA bundle or netrc credential is taken from the environment;
 - any operation not on the allowlist.
 
-The allowlist is the plugin's one definition of "read", and a change to it is a spec change. It holds five operations, four GET and one POST:
+The allowlist is the plugin's one definition of "read", and a change to it is a spec change. It holds six operations, four GET and two POST:
 
 - `GET /api/6.0/fo/asset/host/vm/detection/` with `action=list`;
 - `GET /api/4.0/fo/knowledge_base/vuln/` with `action=list`;
 - `GET /api/6.0/fo/asset/host/vm/detection/dtd/output.dtd` and `GET /api/4.0/fo/knowledge_base/vuln/knowledge_base_vuln_list_output.dtd`, the two output DTDs, with no parameters at all. The observation command reads them (`req-qualys-observe`); the collector does not;
 - `POST /qps/rest/2.0/search/am/tag`, the Asset Management and Tagging tag search (`req-qualys-tags`). It is the only way Qualys lists tags: the API's only tag GET returns one tag by id. The request has no query string, is sent as `text/xml`, and its body must match one fixed template exactly: `<ServiceRequest><preferences>`, an optional `<startFromId>` of digits, a `<limitResults>` of digits, and nothing else. The client builds that body itself, and `send` re-checks it, so the POST can carry no criteria, no tag data and no other operation. An anonymous client may not send it.
+- `POST /qps/rest/2.0/search/am/hostasset`, the Asset Management host asset search (`req-qualys-host-assets`; admitted 2026-11-23, Q40a). Its body must match one template: the same paging preferences, then exactly one filter, `<Criteria field="qwebHostId" operator="IN">` with 1 to 100 comma-separated digit ids. The client builds it and `send` re-checks it, under the same rules as the tag search.
 
 A client built with no credential (`ReadOnlyClient.anonymous`) sends no `Authorization` header and may send only the two DTD reads; a credentialed client refuses to be built with an empty username or password, and the transport treats anything short of both as no credential, so the observation command can learn whether Qualys serves them without one. An optional observer on the client sees every response, with the response headers minus `Set-Cookie` and only the names of the request headers, so the observation command can record it.
 
@@ -183,7 +185,7 @@ Responses are bounded before parsing: a body over 256 MiB is refused, and so is 
 | req-qualys-transport-5 | Next Page Stays Put | Proposed | A next-page URL naming another host, another path or an unlisted parameter ends the read as a recorded failure. | |
 | req-qualys-transport-6 | Hostile XML Refused | Proposed | A body over the size ceiling, nested past the depth ceiling, or declaring entities is refused and recorded as not read, never partly stored; tests feed each case. | `defusedxml`. |
 | req-qualys-transport-7 | Verification Cannot Be Overridden | Proposed | A per-request `verify`, `cert` or `proxies` override is refused; the CA bundle is applied on the session by the plugin only. | |
-| req-qualys-transport-8 | POST Only By Spec Change | Proposed | The allowlist holds exactly one POST, the tag search, and a test fails if the POST list changes. That POST is refused unsent with a query string, with any content type but `text/xml`, with a body outside its template (criteria, tag data, anything else), from an anonymous client, and on any other path, the tag create, update and delete paths among them; a GET to the tag search path is refused too. | Ruled 2026-11-20 (Q8a); the tag search admitted 2026-11-23. `test_qualys_tags.py::TestTheOnePost`. |
+| req-qualys-transport-8 | POST Only By Spec Change | Proposed | The allowlist holds exactly two POSTs, the tag search and the host asset search, and a test fails if the POST list changes; the host asset body is refused with any other criterion or more than 100 ids. That POST is refused unsent with a query string, with any content type but `text/xml`, with a body outside its template (criteria, tag data, anything else), from an anonymous client, and on any other path, the tag create, update and delete paths among them; a GET to the tag search path is refused too. | Ruled 2026-11-20 (Q8a); the tag search admitted 2026-11-23. `test_qualys_tags.py::TestTheOnePost`. |
 | req-qualys-transport-9 | Transient Failures Retried, Waits Outside The Ceiling | Proposed | A 429 or 5xx in the transient set, or a network error, is retried at most 3 times with backoff inside the total wait bound; other failures are not retried; a 1960 wait is at least 30 seconds; the per-request ceiling wraps each attempt and no wait runs inside it; no attempt starts once the run's ceiling has passed, and no wait starts that would reach it. | unified-systems-com/qualys-tap#47, #48, #49. |
 
 ### Probe And Provenance
@@ -697,6 +699,39 @@ The client is `requests`, which reaches TLS through Python's `ssl` module and th
 | --- | --- | --- | --- | --- |
 | req-qualys-fips-1 | Declared And Checked | Proposed | The manifest declares `[fips] status = "compatible"`, and the crypto-providers report finds no bundled OpenSSL in the plugin's closure. | |
 
+### Host Inventory
+----
+RID: `req-qualys-host-assets`
+
+Status: `In Development`
+
+What Qualys holds about each host beyond its vulnerabilities: its network interfaces, open ports and installed software. The detection read carries none of them (field report, 2026-11-23); they live in the Asset Management host asset search. Phase 1, approved 2026-11-23 (Q40), keeps them on the Qualys host as returned. The generic computing_core picture waits on that plugin's keys and edges (computing-core-tap#32), and software becomes packages only once an ecosystem can be stated rather than guessed.
+
+#### Implementation
+
+With `sources.host_assets` on, a live run ends its detection and knowledge-base reads with the host asset search (`req-qualys-transport-8`) for the hosts the detection read returned. It asks for them by Qualys host id (`qwebHostId IN`), at most 100 a request, and pages each group to Qualys's last page by asset id, the same walk as the tag search. Each asset whose `qwebHostId` is one asked for supplies its host's:
+
+- `host_asset_id`: the asset's own id;
+- `interfaces`: `networkInterface` (interface id, name, MAC, address, gateway, hostname, type);
+- `open_ports`: `openPort` (port, protocol, service id and name);
+- `software`: `software` (name, version).
+
+Every value is as returned. A list Qualys did not return is null; an empty one is `[]`.
+
+A host node is written whole, so a host this run did not read an asset record for keeps the inventory the grid holds: not read is never "none". A group not read is listed on the run (`host asset group <n> page <m>`, `not read: <type>`), and so is every group the run's ceiling stopped. Neither touches the detection read. A walk that cannot prove its end, or stops at the page ceiling, warns `TRUNCATED` and is incomplete. With detections switched off there are no hosts to ask for, so the source is listed as not read for that reason, never read as empty.
+
+With the AWS integration on (`req-qualys-aws`), each interface whose `interfaceId` is an ENI id of AWS's shape is minted as `aws_core__aws_ec2_network_interface`, `ATTACHED_TO_INSTANCE__aws_core` its host's instance, under the same create-if-absent rule.
+
+Unverified until a field read: that `qwebHostId` equals the detection read's host id (Qualys's docs imply it but do not say so), and whether software is returned for hosts without a Cloud Agent (the documented samples show it only for agent hosts).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-qualys-host-assets-1 | Inventory As Returned | Proposed | After a run with the source on, each host whose asset was returned carries its asset id, interfaces, open ports and software as returned; a list not returned is null, an empty one `[]`. | `test_qualys_host_assets.py::TestThePage`, `TestOnTheGrid`. Synthetic fixture from the documented shape. |
+| req-qualys-host-assets-2 | Not Read Keeps What Was Held | Proposed | With the source off, or a group not read, a host keeps the inventory an earlier read gave it; the run lists the source as switched off or the group as not read; the detection read is untouched. | `TestOnTheGrid.test_a_run_that_reads_none_keeps_what_was_held`, `test_a_refused_search_is_listed_and_keeps_the_detection_read`. |
+| req-qualys-host-assets-3 | ENIs With The AWS Integration | Proposed | With both on, an interface with an ENI id is minted as an aws_core network interface attached to its instance. | `TestOnTheGrid.test_with_the_aws_integration_an_eni_is_minted_and_attached`. |
+
 ### Chunked Write
 ----
 RID: `req-qualys-chunked-write`
@@ -838,6 +873,7 @@ Qualys is many services stacked on one another, and a subscription may want some
 - `detections`: the host detection walk, and with it the hosts, the detections, and everything derived from them (neutral findings, package links, EC2 links). Off, the run reads the probe only, because the probe is how the credential is checked; the run is `narrower`, so it withdraws no host and the watermark stays.
 - `knowledgebase`: the knowledge-base read for the QIDs the detections name. Off, no QID is asked, so a QID the grid does not hold is written as a stub whose `kb_returned` is null (unobserved), and the neutral rules treat its CVE list as unknown, so no finding on that host is moved to resolved.
 - `tags`: the tag search (`req-qualys-tags`). Off, no POST is sent and no tag is read or changed.
+- `host_assets`: the host asset search (`req-qualys-host-assets`). **Off by default**, unlike the other three, because it needs the Asset Management permission "Read Asset" as well as API Access. Off, a host keeps the inventory an earlier read gave it.
 
 A source switched off is listed on every run in `scopes_not_read` as `{scope: <source>, reason: switched off}`, never as an empty answer, and the run's summary names it. An envelope with every source off is refused before any request.
 

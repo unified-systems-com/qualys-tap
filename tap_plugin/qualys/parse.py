@@ -33,6 +33,10 @@ MAX_DEPTH = 64
 MAX_ELEMENTS = 8_000_000
 
 _EXTRACT = Path(__file__).resolve().parent / "contract" / "extract.json"
+#: Consumed elements this plugin does not read under a given parent. The check matches children by name, so an
+#: element read in one place (``LAST_SUCCESS_DATE`` under ``ATTRIBUTE``) would otherwise be required everywhere the
+#: DTD requires it, and one AWS tag lacking it would refuse a whole detection page (PR #78 review).
+_NOT_READ_UNDER: dict[str, frozenset[str]] = {"CLOUD_TAG": frozenset({"LAST_SUCCESS_DATE"})}
 
 
 class PageRefused(ValueError):
@@ -120,7 +124,8 @@ def _check(node: Element, elements: dict[str, Any], depth: int) -> None:
     decl = elements.get(node.tag)
     if decl:
         present = {child.tag for child in node}
-        missing = [c for c in decl["required_children"] if c in elements and c not in present]
+        skipped = _NOT_READ_UNDER.get(node.tag, frozenset())
+        missing = [c for c in decl["required_children"] if c in elements and c not in present and c not in skipped]
         if missing:
             raise PageRefused(f"{node.tag} lacks required {', '.join(missing)}")
         tags = [child.tag for child in node]

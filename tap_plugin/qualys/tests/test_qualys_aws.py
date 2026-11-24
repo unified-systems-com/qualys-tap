@@ -166,3 +166,17 @@ class TestObserve:
         assert seen["account_id"] is None and seen["vpc_id"] is None and seen["tags"] is None
         # Two groups are both minted, but neither is named: the pairing of several names is not documented.
         assert seen["security_groups"] == ["sg-0aaa1111", "sg-0bbb2222"] and seen["group_names"] == {}
+
+
+class TestTheContract:
+    @pytest.mark.spec("req-qualys-aws-1")
+    def test_a_tag_without_its_date_does_not_refuse_the_page_but_an_attribute_keeps_its_check(self) -> None:
+        from tap_plugin.qualys.parse import PageRefused, parse_detection_page
+
+        page = _page().replace(b"<LAST_SUCCESS_DATE>2026-11-20T00:00:00Z</LAST_SUCCESS_DATE></CLOUD_TAG>", b"</CLOUD_TAG>")
+        host = next(h for h in parse_detection_page(page).hosts if h["host_id"] == "1001")
+        assert host["cloud_tags"][0] == {"name": "Name", "value": "web-1"}
+        # Required children the plugin reads are still checked: a tag with no VALUE refuses the page.
+        with pytest.raises(PageRefused, match="CLOUD_TAG lacks required VALUE"):
+            parse_detection_page(_page().replace(b"<VALUE>web-1</VALUE>", b"", 1))
+

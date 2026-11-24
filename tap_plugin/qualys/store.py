@@ -111,13 +111,17 @@ class GridStore:
         keys = set(keys)
         if not keys:
             return set()
-        from tap_grid.natural_key import constituting_properties, is_dimension
+        from tap_grid.natural_key import constituting_properties, is_dimension, search
 
         names = model.NATURAL_KEY
         columns = [i for i, name in enumerate(names) if not is_dimension(name)]
         if len(columns) == len(names):
             rows = model.objects.filter(**{f"{names[0]}__in": {k[0] for k in keys}}).values_list(*names)
             return {tuple(row) for row in rows} & keys
+        if not columns:
+            # Every entry a dimension: no column to narrow by, so each key is looked up as core's search does
+            # (containment on the spine's dimensions, served by its GIN index). PR #93 review.
+            return {k for k in keys if search(model.objects.all(), dict(zip(names, k, strict=True))).exists()}
         # A key naming a dimension (form 3, unified-systems-com/tap#1355): the value lives on the spine's
         # dimensions, never in a column, so narrow by a column and read each row's key the way core does.
         first = columns[0]

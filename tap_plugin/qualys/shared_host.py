@@ -16,6 +16,7 @@ import re
 from collections.abc import Iterable
 from typing import Any, Protocol
 
+from tap_grid.natural_key import encode_key_part
 from tap_plugin.computing_core import key_dimensions
 from tap_plugin.qualys import neutral
 from tap_plugin.qualys.parsers.package_table import _unambiguous, ecosystem_of
@@ -24,6 +25,8 @@ HOST_TYPE = "computing_core__host"
 EC2_HOST_TYPE = key_dimensions.AWS_EC2
 TRACKS_HOST = "TRACKS_HOST__qualys"
 INSTALLS_PACKAGE = "INSTALLS_PACKAGE__computing_core"
+INTERFACE_TYPE = "computing_core__network_interface"
+CONTAINS_INTERFACE = "CONTAINS_NETWORK_INTERFACE__computing_core"
 _INSTANCE = re.compile(r"i-[0-9a-f]{8}(?:[0-9a-f]{9})?")
 
 
@@ -62,6 +65,26 @@ def _key_ref(key: tuple[str, str]) -> dict[str, str]:
     return {key_dimensions.HOST_TYPE_ENTRY: key[0], "stable_id": key[1]}
 
 
+def host_scope(key: tuple[str, str]) -> str:
+    """The ``tap.computing.host`` value a host-scoped thing carries: the host's spine natural key, escaped as core escapes it."""
+    return f"{encode_key_part(key[0])}|{encode_key_part(key[1])}"
+
+
+def interfaces_of(interfaces: list[dict[str, Any]] | None) -> dict[str, str | None]:
+    """The interfaces a host asset names, by interface name, each with its MAC where Qualys reported one.
+
+    An interface with no name has no key (req-computing-core-interface-2), so it is not written. An empty MAC is
+    unobserved, never ``""`` (req-computing-core-interface-1): Qualys returns the EC2 metadata MAC empty.
+    """
+    out: dict[str, str | None] = {}
+    for item in interfaces or []:
+        name, mac = item.get("interface_name"), item.get("mac_address")
+        if isinstance(name, str) and name.strip():
+            mac = mac.strip().lower() if isinstance(mac, str) and mac.strip() else None
+            out[name.strip()] = out.get(name.strip()) or mac
+    return out
+
+
 def packages_of(software: list[dict[str, Any]] | None, os_name: Any) -> list[tuple[str, str, str]]:
     """The packages a host's software list names, keyed only where the ecosystem and the version are unambiguous."""
     ecosystem = ecosystem_of(os_name)
@@ -76,7 +99,7 @@ def packages_of(software: list[dict[str, Any]] | None, os_name: Any) -> list[tup
 
 
 def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], grid: HostView) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
-    """Nodes, edges, authority claims and counters for the shared hosts and their installed software."""
+    """Nodes, edges, authority claims and counters for the shared hosts, their interfaces and their installed software."""
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
     claims: list[dict[str, Any]] = []
@@ -84,14 +107,21 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
     # Two Qualys hosts can name one instance (a re-registered agent, a stale record): each is linked, and the
     # shared host installs what either reports (PR #87 review).
     wanted: dict[tuple[str, str], tuple[list[str], set[tuple[str, str, str]]]] = {}
+    software_read: set[tuple[str, str]] = set()
+    interfaces: dict[tuple[str, str], dict[str, str | None]] = {}
     for host in hosts:
         key = host_key(host)
         asset = assets.get(host.get("host_id") or "")
-        if key is None or asset is None or asset.get("software") is None:
-            continue  # no issuer's id, or no software read this run: nothing to say about installs
+        if key is None or asset is None or (asset.get("software") is None and asset.get("interfaces") is None):
+            continue  # no issuer's id, or nothing read this run that the shared host carries
         host_ids, packages = wanted.setdefault(key, ([], set()))
         host_ids.append(host["host_id"])
-        packages.update(packages_of(asset["software"], host.get("os")))
+        if asset.get("software") is not None:
+            software_read.add(key)
+            packages.update(packages_of(asset["software"], host.get("os")))
+        for name, mac in interfaces_of(asset.get("interfaces")).items():
+            seen = interfaces.setdefault(key, {})
+            seen[name] = seen.get(name) or mac
     if not wanted:
         return nodes, edges, claims, counters
     held_hosts = grid.held_keys(HOST_TYPE, wanted)
@@ -101,6 +131,9 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
     held_packages = grid.held_packages(all_packages)
     host_dims = grid.default_dimensions(HOST_TYPE)
     package_dims = grid.default_dimensions(neutral.PACKAGE_TYPE)
+    wanted_interfaces = {(host_scope(key), name) for key, names in interfaces.items() for name in names}
+    held_interfaces = grid.held_keys(INTERFACE_TYPE, wanted_interfaces) or set()
+    interface_dims = grid.default_dimensions(INTERFACE_TYPE) if wanted_interfaces else {}
     for package in sorted(all_packages - held_packages):
         nodes.append(neutral.package_node(f"p:{'/'.join(package)}", package, package_dims))
         counters["packages_created"] = counters.get("packages_created", 0) + 1
@@ -120,6 +153,22 @@ def build(hosts: Iterable[dict[str, Any]], assets: dict[str, dict[str, Any]], gr
             edges.append({"entity": {"ref": f"e-installs-{key[1]}-{'/'.join(package)}", "entity_type": "edge", "name": INSTALLS_PACKAGE, "dimensions": {}},
                           "edge": {**_host_end(key, minted, "from"), "to_key": neutral.package_ref(package), "edge_type": INSTALLS_PACKAGE, "properties": {}}})
             counters["installs"] = counters.get("installs", 0) + 1
+        for name, mac in sorted(interfaces.get(key, {}).items()):
+            scope = host_scope(key)
+            ref = f"ni:{key[1]}:{name}"
+            if (scope, name) in held_interfaces:
+                end = {"to_key": {"entity_type": INTERFACE_TYPE, "key": {key_dimensions.HOST_ENTRY: scope, "interface_name": name}}}
+            else:
+                # Created where absent, with what Qualys saw; an interface another plugin holds is never rewritten.
+                nodes.append({"entity": {"ref": ref, "entity_type": INTERFACE_TYPE, "name": name,
+                                         "dimensions": {**interface_dims, key_dimensions.HOST: scope}},
+                              "node": {"interface_name": name, "mac_address": mac}})
+                counters["interfaces_created"] = counters.get("interfaces_created", 0) + 1
+                end = {"to_ref": ref}
+            edges.append({"entity": {"ref": f"e-contains-{key[1]}-{name}", "entity_type": "edge", "name": CONTAINS_INTERFACE, "dimensions": {}},
+                          "edge": {**_host_end(key, minted, "from"), **end, "edge_type": CONTAINS_INTERFACE, "properties": {}}})
+        if key not in software_read:
+            continue
         # Always partial. A claim's scope is every live edge of its type at the anchor, whoever wrote it
         # (req-grid-reconcile-edge-authority-2), and the shared host's installs are every scanner's: a complete
         # Qualys claim would propose retiring what another scanner saw (PR #87 review). Scoping a claim to its

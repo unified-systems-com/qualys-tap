@@ -187,3 +187,16 @@ class TestAHeldHostAtAnyBound:
             last_package = max(i for i, b in enumerate(batches) for n in b["nodes"] if n["entity"]["entity_type"] == "computing_core__package")
             assert first_install > last_package, bound  # after the packages it names, never in the opening
 
+
+
+@pytest.mark.django_db
+class TestHeldKeys:
+    """The held-key read for every key shape: columns, columns with a dimension, and dimensions alone."""
+
+    def test_a_dimension_only_key_is_looked_up_not_indexed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_plugin.qualys.store import GridStore
+
+        model = _host_model()
+        _hold_host(name="web-1")
+        monkeypatch.setattr(model, "NATURAL_KEY", (key_dimensions.HOST_TYPE_ENTRY,))
+        assert GridStore().held_keys(shared_host.HOST_TYPE, {("aws-ec2",), ("machine-id",)}) == {("aws-ec2",)}

@@ -1,6 +1,6 @@
 manifest_version = "0"
 plugin_version = "0.12.1" # x-release-please-version
-requires_tap = ">=0.4.9"
+requires_tap = ">=0.5.0"  # 0008_history_event_time depends on tap_grid 0024 (core v0.5.0: event time on history rows)
 slug = "qualys"
 name = "Qualys TAP"
 description = "Qualys VMDR host detections, from Cloud Agents and scanner appliances, the QID knowledge base behind them and the subscription's asset tags, read-only and held on the grid as Qualys returns them, linked to the AWS EC2 instances they concern."
@@ -51,4 +51,4 @@ dimension = "grift/dimension.grift.json"
 [[boot.records]]
 name = "ci"
 description = "RESERVED NAME (req-boot-bootstrap-ci-record): the stack this plugin's own tests run in - depends_on closure + self, offline, credential-free. The consumer flips self to editable."
-sha256 = "794e1e3875d7fc43f127c565fb095c9f6b62ccfae9479470d51e640f8bdfd7de"
+sha256 = "7e68121f1f12ffee5bbf21abcbc43b086d798e3da4ba35efc019e62eeec3ca2d"

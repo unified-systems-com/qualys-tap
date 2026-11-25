@@ -115,8 +115,11 @@ class TestMinting:
         vpc_dims = view(_model("Vpc").objects.get(vpc_id="vpc-0123abcd").entity.dimensions)
         assert vpc_dims.get("aws.region") == "us-east-1" and "aws.account" not in vpc_dims
         assert not _edge_pairs("HOSTS_VPC__aws_core") and not _edge_pairs("HOSTS_SUBNET__aws_core")
-        # This stack's aws_core predates USES_SECURITY_GROUP__aws_core, so the edge is not written.
-        assert not Edge.objects.filter(edge_type=aws_mint.USES_SECURITY_GROUP).exists()
+        # USES_SECURITY_GROUP__aws_core is written exactly when the installed aws_core declares it (aws-core-tap#294).
+        from tap_grid.constraints import get_edge_type_constraints
+
+        declared = get_edge_type_constraints(aws_mint.USES_SECURITY_GROUP) is not None
+        assert Edge.objects.filter(edge_type=aws_mint.USES_SECURITY_GROUP).exists() == declared
         # The Qualys host links to the instance it minted.
         host = QualysHost.objects.get(subscription_key=KEY, host_id="1001")
         assert host.ec2_metadata["keyName"] == "deploy" and host.ec2_metadata["latest/meta-data/public-ipv4"] == ""

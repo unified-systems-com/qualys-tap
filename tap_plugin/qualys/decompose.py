@@ -168,6 +168,8 @@ class Run:
     host_assets_not_read: list[dict[str, str]] = field(default_factory=list)
     #: Whether the envelope turned the AWS integration on (req-qualys-aws): mint absent aws_core nodes.
     aws: bool = False
+    #: The envelope's declared networks (req-qualys-host-network): ``{"default": name, "vpcs": {vpc id: name}}`` or None.
+    networks: dict[str, Any] | None = None
     #: The sources the envelope switched off (req-qualys-sources), each listed on the run as not read.
     switched_off: list[str] = field(default_factory=list)
 
@@ -648,7 +650,7 @@ def decompose(run: Run, pages: list[DetectionPage], kb_pages: list[KnowledgeBase
     result.count("detections", len(seen_detections))
     _inventory(key, run, grid, result, seen_hosts)
     if run.host_assets:
-        host_nodes, host_edges, host_claims, host_counts = shared_host.build((h for page in pages for h in page.hosts), run.host_assets, grid)
+        host_nodes, host_edges, host_claims, host_counts = shared_host.build((h for page in pages for h in page.hosts), run.host_assets, grid, run.networks)
         result.nodes.extend(host_nodes)
         result.edges.extend(host_edges)
         result.authority.extend(host_claims)

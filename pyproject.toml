@@ -23,8 +23,8 @@ dynamic = ["version"]
 # host on the tap.computing.host_type dimension (#103), 0.11.1 keys network_interface (#105), 0.11.2 adds AVAILABLE_AT_IP_ADDRESS (#108); the shared host writes all three. defusedxml is not in tap's lock, so it is pinned
 # exactly, as the fleet's Renovate rule pins every other third-party runtime dependency.
 dependencies = [
-    "computing-core-tap>=0.11.2",
-    "compliance-core-tap",
+    "computing-core-tap>=0.11.3",
+    "compliance-core-tap>=0.8.16",
     "requests>=2.34.2,<3",
     "defusedxml==0.7.1",
 ]

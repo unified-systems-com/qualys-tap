@@ -3,7 +3,7 @@
 # logic runs; the plugin's manifest `requires_tap` pins WHICH core it runs against; the
 # harness is core at the tag v<floor>, resolved by the workflow (req-tap-plugin-extdev-repo-ci-7).
 # The in-package tap_plugin/qualys/boot/ci.boot.json is the opt-in (req-boot-bootstrap-ci-record-6).
-# The `uses:` pin is tap v0.4.9 at 86f9d918ad5a (2026-11-24), the release qualys requires.
+# The `uses:` pin is tap v0.5.0 at af6c940e52bc (2026-11-25), the release qualys requires.
 name: ci
 
 on:
@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@86f9d918ad5ac2cce52225d3c5a4dd0596aab68e
+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@af6c940e52bc68b50add3b9ff63e600da8265e58
     with:
       plugin_slug: qualys
       # The ci record installs aws_core (a declared, optional dependency), and aws_core's migrate is the

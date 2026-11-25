@@ -8,7 +8,8 @@ unkeyable: it is not stored, counted, and its page counts as partly read.
 The grid applies a written node as a full replacement, so a node rewritten to change one fact re-sends every
 other fact as the grid holds it (a withdrawn host), and a node the run did not read is not written at all when
 the grid already holds it (a QID the knowledge base did not return this time). Grid reads come in through a
-``GridView`` so this module stays testable without a database.
+``GridView`` so :func:`decompose` stays testable without a database; only the document header (:func:`document`,
+:func:`documents`) reads the grid, for the versions its format "1" header states.
 
 Resolution follows Qualys alone: a detection is ``resolved`` exactly when Qualys reports ``Fixed`` and ``open``
 otherwise; a detection absent from a read is not written, so it keeps what it had (req-qualys-states-3, -4).
@@ -764,8 +765,9 @@ def document(result: Result, run: Run) -> dict[str, Any]:
 
 def _document(run: Run, name: str, description: str, data: dict[str, Any], nodes: list[dict[str, Any]], edges: list[dict[str, Any]],
               authority: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
-        "metadata": {"grift_version": "0"},
+    from tap_grid.grift.upgrade import build_header
+
+    doc: dict[str, Any] = {
         "_reserved": {},
         "batches": [{
             "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": name, "dimensions": {}},
@@ -780,6 +782,9 @@ def _document(run: Run, name: str, description: str, data: dict[str, Any], nodes
             **({"edge_cases": {"authority": authority}} if authority else {}),
         }],
     }
+    # GRIFT format "1": core states the spine and every type the batch carries at the versions this grid records,
+    # read once the batch is complete (tap 0.5.0 refuses a format "0" document by default).
+    return {"metadata": build_header(doc), **doc}
 
 
 #: Identity keys per batch of a chunked write: each node and each edge is about one advisory lock, held until

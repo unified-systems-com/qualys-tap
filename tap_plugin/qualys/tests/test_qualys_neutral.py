@@ -145,6 +145,7 @@ class TestCarrier:
         (carries,) = _edges(decompose(_run(), _pages(), _kb(_vuln("11827", "CVE-1")), FakeGrid()), neutral.CARRIES)
         assert carries["from_ref"] == "h1001"
 
+    @pytest.mark.django_db  # document() reads the header's versions from the grid
     def test_one_authority_claim_per_finding(self) -> None:
         kb = _kb(_vuln("6666666", "CVE-1", "CVE-2"), _vuln("38170"), _vuln("11827"), _vuln("45038"))
         result = decompose(_run(), _pages(), kb, FakeGrid())

@@ -21,6 +21,7 @@ from tap_plugin.qualys.tests.test_qualys_event_time import AT, FIXTURES, HOST
 from tap_plugin.qualys.tests.test_qualys_event_time import KEY as FILE_KEY
 
 from tap_grid.grift.importer import grift_import
+from tap_grid.grift.upgrade import build_header
 
 
 def _decomposed() -> tuple[Any, Run]:
@@ -58,6 +59,17 @@ class TestTheParts:
                 for end in ("from_ref", "to_ref"):
                     if e["edge"].get(end) is not None:
                         assert e["edge"][end] in refs, (e["entity"]["ref"], end)
+
+    def test_every_part_carries_core_s_format_1_header_for_its_own_types(self, parts) -> None:
+        """Each part states the spine and the types its own batch carries, read from the grid (tap 0.5.0 refuses a
+        format "0" document by default)."""
+        _, _, docs = parts
+        for doc in docs:
+            header = doc["metadata"]
+            assert header["grift_version"] == "1"
+            assert header == build_header(doc)
+            carried = {n["entity"]["entity_type"] for n in _batch(doc)["nodes"]}
+            assert carried <= set(header["type_versions"])
 
     @pytest.mark.spec("req-qualys-chunked-write-2")
     def test_each_body_batch_stays_inside_the_bound_unless_one_group_is_bigger(self, parts) -> None:

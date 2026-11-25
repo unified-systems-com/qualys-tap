@@ -1,6 +1,7 @@
 """Parsed pages into GRIFT nodes and edges (req-qualys-host, -detection, -qid, -states, -subscription-run).
 
-Pure: a fake grid view stands in for what the grid holds, so no database is needed.
+Pure: a fake grid view stands in for what the grid holds, so no database is needed, except where a test builds the
+GRIFT document, whose format "1" header reads the versions the grid records.
 """
 
 from datetime import UTC, datetime
@@ -161,6 +162,7 @@ class TestWithdrawal:
         (sub,) = _nodes(result, "qualys__qualys_subscription")
         assert sub["last_complete_read_at"] == held["last_complete_read_at"]  # a partly read run is not complete
 
+    @pytest.mark.django_db  # document() reads the header's versions from the grid
     def test_complete_label_with_a_narrower_filter_is_downgraded(self) -> None:
         run = _run(COMPLETE)
         run.applied_filter = {"tag_ids": [7]}

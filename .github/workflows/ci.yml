@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@af6c940e52bc68b50add3b9ff63e600da8265e58
+    uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@21e4e525af68f90e294030f43d74c4abaac7c36f
     with:
       plugin_slug: qualys
       # The ci record installs aws_core (a declared, optional dependency), and aws_core's migrate is the
